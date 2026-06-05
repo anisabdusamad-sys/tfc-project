@@ -1,0 +1,20 @@
+{
+    "name": "TFC Kulob City",
+    "short_name": "TFC",
+    "start_url": "/",
+    "display": "standalone",
+    "background_color": "#ffffff",
+    "theme_color": "#ff0000",
+    "icons": [
+        {
+            "src": "/static/images/TFC.jpg",
+            "sizes": "192x192",
+            "type": "image/jpeg"
+        },
+        {
+            "src": "/static/images/TFC.jpg",
+            "sizes": "512x512",
+            "type": "image/jpeg"
+        }
+    ]
+}
