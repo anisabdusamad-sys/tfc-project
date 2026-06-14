@@ -20,10 +20,10 @@ def run_tfc():
     print("--- TFC System Starting ---")
     
     # Sar kardani Admin Panel (bilol.py)
-    admin = subprocess.Popen([sys.executable, "bilol.py"])
+    admin = subprocess.Popen([sys.executable, "bilol.py"], creationflags=subprocess.CREATE_NEW_CONSOLE)
     
     # Sar kardani Menu Website (app.py)
-    menu = subprocess.Popen([sys.executable, "app.py"])
+    menu = subprocess.Popen([sys.executable, "app.py"], creationflags=subprocess.CREATE_NEW_CONSOLE)
     
     admin_port = 5001
     menu_port = 5000

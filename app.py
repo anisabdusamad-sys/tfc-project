@@ -5,6 +5,7 @@ import random
 import os
 from flask import Flask, render_template_string, url_for, request, jsonify, send_from_directory, redirect
 from datetime import datetime
+import re
 from pywebpush import webpush, WebPushException
 from werkzeug.utils import secure_filename
 
@@ -20,11 +21,39 @@ VAPID_PUBLIC_KEY = "BCX7B8_p9v7Z-S-l1M0W4Y1Z2X3C4V5B6N7M8L9K0J1I2H3G4F5E6D7C8B9A
 VAPID_PRIVATE_KEY = "m1N2B3V4C5X6Z7A8S9D0F1G2H3J4K5L6m1N2B3V4C5X"
 VAPID_CLAIMS = {"sub": "mailto:admin@tfc-kulob.tj"}
 
+# Рӯйхати рақамҳо барои гардиш ҳангоми Доставка
+PAYMENT_PHONE_NUMBERS = ["944975050", "754169090"]
+
+def get_setting(key, default_value=None):
+    """Гирифтани танзимот аз база"""
+    conn = sqlite3.connect(DB_PATH, timeout=20)
+    cur = conn.cursor()
+    cur.execute("SELECT value FROM settings WHERE key = ?", (key,))
+    result = cur.fetchone()
+    conn.close()
+    return result[0] if result else default_value
+
+def set_setting(key, value):
+    """Захира кардани танзимот дар база"""
+    conn = sqlite3.connect(DB_PATH, timeout=20)
+    cur = conn.cursor()
+    cur.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, str(value)))
+    conn.commit()
+    conn.close()
+
+def get_next_payment_phone_for_rotation():
+    """Интихоби рақами навбатӣ барои пардохт"""
+    last_index_str = get_setting("last_payment_phone_index", "0")
+    last_index = int(last_index_str) if last_index_str.isdigit() else 0
+    next_index = (last_index + 1) % len(PAYMENT_PHONE_NUMBERS)
+    set_setting("last_payment_phone_index", str(next_index))
+    return PAYMENT_PHONE_NUMBERS[next_index]
+
 # Rohi mutlaq baroi muvofiqat bo bilol.py
 DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tfc_admin.db")
 
 def init_db() -> None:
-    conn = sqlite3.connect(DB_PATH, timeout=20)
+    conn = sqlite3.connect(DB_PATH, timeout=20) # Ensure timeout is applied here
     cur = conn.cursor()
     
     # 1. Аввал ҷадвалҳоро месозем
@@ -38,10 +67,12 @@ def init_db() -> None:
             price TEXT NOT NULL,
             phone TEXT NOT NULL DEFAULT '',
             delivery_type TEXT NOT NULL DEFAULT '',
+            tip TEXT NOT NULL DEFAULT '',
             qabyl INTEGER NOT NULL DEFAULT 0,
             omoda INTEGER NOT NULL DEFAULT 0,
             dostavka INTEGER NOT NULL DEFAULT 0,
             out_of_stock INTEGER NOT NULL DEFAULT 0,
+            estimated_time INTEGER DEFAULT 0,
             created TEXT NOT NULL
         )
         """
@@ -55,16 +86,23 @@ def init_db() -> None:
     if "price" not in a_cols:
         cur.execute("ALTER TABLE aktsii ADD COLUMN price TEXT NOT NULL DEFAULT ''")
 
+    cur.execute("CREATE TABLE IF NOT EXISTS customers (id INTEGER PRIMARY KEY AUTOINCREMENT, full_name TEXT NOT NULL, customer_id TEXT UNIQUE NOT NULL, created TEXT NOT NULL)")
+
     # Ҷадвали махсус барои нигоҳдории доимии даромад (History)
     cur.execute(
         """
         CREATE TABLE IF NOT EXISTS revenue_history (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             amount REAL NOT NULL,
-            day TEXT NOT NULL
+            day TEXT NOT NULL,
+            customer_id TEXT DEFAULT ''
         )
         """
     )
+    cur.execute("PRAGMA table_info(revenue_history)")
+    rev_cols = [r[1] for r in cur.fetchall()]
+    if "customer_id" not in rev_cols:
+        cur.execute("ALTER TABLE revenue_history ADD COLUMN customer_id TEXT DEFAULT ''")
 
     # Ҷадвали таърихи пурраи заказҳо (Архив)
     cur.execute(
@@ -77,6 +115,7 @@ def init_db() -> None:
             price TEXT NOT NULL,
             phone TEXT NOT NULL,
             delivery_type TEXT NOT NULL,
+            tip TEXT NOT NULL DEFAULT '',
             created TEXT NOT NULL
         )
         """
@@ -98,7 +137,15 @@ def init_db() -> None:
     if "delivery_latitude" not in cols: cur.execute("ALTER TABLE orders ADD COLUMN delivery_latitude TEXT DEFAULT ''")
     if "delivery_longitude" not in cols: cur.execute("ALTER TABLE orders ADD COLUMN delivery_longitude TEXT DEFAULT ''")
     if "delivery_address" not in cols: cur.execute("ALTER TABLE orders ADD COLUMN delivery_address TEXT DEFAULT ''")
-    
+    if "tip" not in cols: cur.execute("ALTER TABLE orders ADD COLUMN tip TEXT NOT NULL DEFAULT ''")
+    if "refund" not in cols: cur.execute("ALTER TABLE orders ADD COLUMN refund REAL DEFAULT 0")
+    if "estimated_time" not in cols: cur.execute("ALTER TABLE orders ADD COLUMN estimated_time INTEGER DEFAULT 0")
+    if "payment_method" not in cols:
+        cur.execute("ALTER TABLE orders ADD COLUMN payment_method TEXT DEFAULT 'online'")
+
+    # Ҷадвал барои танзимоти динамикӣ
+    cur.execute("CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)")
+
     cur.execute("PRAGMA table_info(foods)")
     f_cols = [r[1] for r in cur.fetchall()]
     if "description" not in f_cols: cur.execute("ALTER TABLE foods ADD COLUMN description TEXT NOT NULL DEFAULT ''")
@@ -108,6 +155,12 @@ def init_db() -> None:
     cur.execute("PRAGMA table_info(reviews)")
     r_cols = [r[1] for r in cur.fetchall()]
     if "image_url" not in r_cols: cur.execute("ALTER TABLE reviews ADD COLUMN image_url TEXT")
+
+    cur.execute("PRAGMA table_info(full_order_history)")
+    foh_cols = [r[1] for r in cur.fetchall()]
+    if "tip" not in foh_cols: cur.execute("ALTER TABLE full_order_history ADD COLUMN tip TEXT NOT NULL DEFAULT ''")
+    if "payment_method" not in foh_cols:
+        cur.execute("ALTER TABLE full_order_history ADD COLUMN payment_method TEXT DEFAULT 'online'")
 
     # 3. Илова кардани додаҳои намунавӣ (Sync with bilol.py)
     sample_foods = [
@@ -277,6 +330,21 @@ def init_db() -> None:
         ("БАСКЕТ", "130", "Фастфуд", "36.png", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
     ]
 
+    # Тафтиши мавҷудияти хӯрокҳо ва ворид кардани онҳо бо сутуни subcategory
+    for f in sample_foods:
+        name, price, cat, img = f[0], f[1], f[2], f[3]
+        # Агар дарозии элемент 6 бошад, пас индекси 4 subcategory аст
+        sub = f[4] if len(f) == 6 else ""
+        created = f[-1]
+        
+        cur.execute("""
+            INSERT OR IGNORE INTO foods (name, price, category, subcategory, image_url, created)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (name, price, cat, sub, img, created))
+
+    # Тоза кардани расмҳои гумшуда барои пешгирӣ аз хатогии 404
+    cur.execute("UPDATE foods SET image_url = '' WHERE image_url IN ('d9.png', 'd10.png', 'd11.png')")
+
     conn.commit()
     conn.close()
 
@@ -332,14 +400,15 @@ ADMIN_HTML = """<!DOCTYPE html>
                         <td>${o.delivery_type === 'delivery' ? '🚀 Доставка' : '🛍️ Самовывоз'}</td>
                         <td>${o.food}</td>
                         <td>${o.price}с</td>
-                        <td><button onclick="updateStatus(${o.id}, 'qabyl', ${!o.qabyl})" class="${o.qabyl ? 'text-green-500':'text-red-500'}">${o.qabyl ? '✅':'⏳'}</button></td>
+                        <td><button onclick="updateStatus(${o.id}, 'qabyl', ${!o.qabyl})" class="${o.qabyl ? 'text-green-500':'text-red-500'} text-xl">${o.qabyl ? '✅':'⏳'}</button></td>
                         <td><button onclick="updateStatus(${o.id}, 'omoda', ${!o.omoda})" class="${o.omoda ? 'text-green-500':'text-yellow-500'}">${o.omoda ? '✅':'🔥'}</button></td>
                     </tr>`;
             });
             document.getElementById('total-count').textContent = data.orders.length;
         }
         async function updateStatus(id, field, val) {
-            await fetch('/api/orders/update-status', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({id, field, value:val}) });
+            const body = {id, field, value:val};
+            await fetch('/api/orders/update-status', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body) });
             loadOrders();
         }
         setInterval(loadOrders, 3000); loadOrders();
@@ -364,10 +433,10 @@ FOOD_DETAIL_TEMPLATE = r"""
         body { font-family: 'Montserrat', sans-serif; background: #0a0a0a; color: #e0e0e0; }
         .header-gradient { background: linear-gradient(135deg, var(--tfc-red) 0%, var(--tfc-dark) 100%); }
         .detail-card { background: rgba(255,255,255,0.05); backdrop-filter: blur(8px); border: 1px solid rgba(255,0,0,0.2); }
-        .price-display { font-size: 2.5rem; color: var(--tfc-red); font-weight: 900; }
-        .description-text { line-height: 1.8; color: #d0d0d0; white-space: pre-wrap; }
-        .media-container { border-radius: 24px; overflow: hidden; background: #000; width: 100%; aspect-ratio: 16 / 10; max-height: 400px; display: flex; align-items: center; justify-content: center; box-shadow: 0 10px 40px rgba(0,0,0,0.5); }
-        .media-container img, .media-container video { width: 100%; height: 100%; object-fit: cover; display: block; }
+        .price-display { font-size: 1.5rem; color: var(--tfc-red); font-weight: 900; }
+        .description-text { line-height: 1.6; color: #d0d0d0; white-space: pre-wrap; }
+        .media-container { border-radius: 20px; overflow: hidden; background: #1a1a1a; height: 220px; }
+        .media-container img, .media-container video { width: 100%; height: auto; display: block; }
     </style>
 </head>
 <body class="pb-20">
@@ -379,64 +448,64 @@ FOOD_DETAIL_TEMPLATE = r"""
             </a>
             <div class="text-center">
                 <h1 class="text-3xl font-black">TFC</h1>
-                <p class="text-sm text-white/70">KULOB CITY</p>
+                <p class="text-sm text-white/70">Tajik Fried Fish & Chicken</p>
             </div>
             <div class="w-12"></div>
         </div>
     </div>
 
-    <main class="max-w-3xl mx-auto p-4 sm:p-6">
+    <main class="max-w-md mx-auto p-4 sm:p-6">
         <div class="detail-card rounded-3xl overflow-hidden shadow-2xl">
             <!-- Media Section -->
             <div class="media-container">
                 {% if food.is_video %}
-                    <video controls autoplay muted loop class="w-full h-full">
+                    <video controls autoplay muted loop class="w-full h-full object-contain">
                         <source src="{{ food.image_path }}" type="video/mp4">
                         Ваш браузер не поддерживает видео.
                     </video>
                 {% elif food.image_path %}
-                    <img src="{{ food.image_path }}" alt="{{ food.name }}" class="w-full h-full">
+                    <img src="{{ food.image_path }}" alt="{{ food.name }}" class="w-full h-full object-contain mx-auto p-2">
                 {% else %}
-                    <div class="w-full h-96 bg-gradient-to-br from-red-600 to-red-900 flex items-center justify-center">
+                    <div class="w-full h-full bg-gradient-to-br from-red-600 to-red-900 flex items-center justify-center">
                         <i class="fas fa-utensils text-white text-6xl opacity-30"></i>
                     </div>
                 {% endif %}
             </div>
 
             <!-- Details Section -->
-            <div class="p-6 sm:p-8">
+            <div class="p-4 sm:p-6">
                 <!-- Title and Category -->
-                <div class="mb-6">
-                    <p class="text-sm text-red-400 font-bold uppercase tracking-wider mb-2">{{ food.category }}</p>
-                    <h1 class="text-4xl sm:text-5xl font-black mb-2">{{ food.name }}</h1>
+                <div class="mb-4">
+                    <p class="text-[10px] text-red-400 font-bold uppercase tracking-wider mb-1">{{ food.category }}</p>
+                    <h1 class="text-2xl sm:text-3xl font-black mb-1">{{ food.name }}</h1>
                 </div>
 
                 <!-- Price -->
-                <div class="mb-8 pb-6 border-b border-gray-700">
-                    <p class="text-sm text-gray-400 uppercase tracking-wide mb-2">Цена</p>
+                <div class="mb-6 pb-4 border-b border-gray-700">
+                    <p class="text-xs text-gray-400 uppercase tracking-wide mb-1">Цена</p>
                     <div class="price-display">{{ food.price }} сом</div>
                 </div>
 
                 <!-- Description -->
                 {% if food.description %}
-                <div class="mb-8">
-                    <h2 class="text-lg font-bold mb-4 flex items-center gap-2">
+                <div class="mb-6">
+                    <h2 class="text-sm font-bold mb-2 flex items-center gap-2">
                         <i class="fas fa-info-circle text-red-500"></i>
                         Подробная информация
                     </h2>
-                    <div class="description-text bg-rgba(0,0,0,0.3) p-6 rounded-xl border-l-4 border-red-500">
+                    <div class="description-text text-sm bg-black/20 p-4 rounded-xl border-l-2 border-red-500">
                         {{ food.description }}
                     </div>
                 </div>
                 {% endif %}
 
                 <!-- Action Buttons -->
-                <div class="flex gap-4 mt-8">
-                    <button onclick="window.location.href='/'" class="flex-1 bg-gradient-to-r from-red-600 to-red-700 hover:from-red-700 hover:to-red-800 text-white font-bold py-4 px-6 rounded-2xl transition-all active:scale-95 shadow-lg shadow-red-500/30 flex items-center justify-center gap-2">
+                <div class="flex gap-3 mt-6">
+                    <button onclick="window.location.href='/'" class="flex-1 bg-gradient-to-r from-red-600 to-red-700 hover:from-red-700 hover:to-red-800 text-white font-bold py-3 px-4 rounded-xl transition-all active:scale-95 shadow-lg shadow-red-500/30 flex items-center justify-center gap-2 text-xs">
                         <i class="fas fa-arrow-left"></i>
                         На главную
                     </button>
-                    <button onclick="shareFood()" class="flex-1 bg-white/10 hover:bg-white/20 border border-white/20 text-white font-bold py-4 px-6 rounded-2xl transition-all active:scale-95 flex items-center justify-center gap-2">
+                    <button onclick="shareFood()" class="flex-1 bg-white/10 hover:bg-white/20 border border-white/20 text-white font-bold py-3 px-4 rounded-xl transition-all active:scale-95 flex items-center justify-center gap-2 text-xs">
                         <i class="fas fa-share-alt"></i>
                         Поделиться
                     </button>
@@ -474,26 +543,13 @@ HTML_TEMPLATE = r"""
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="theme-color" content="#ff0000">
-    <meta name="mobile-web-app-capable" content="yes">
-    <meta name="apple-mobile-web-app-capable" content="yes">
-    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <link rel="icon" type="image/jpeg" href="{{ url_for('static', filename='images/TFC.jpg') }}">
-    <link rel="apple-touch-icon" href="{{ url_for('static', filename='images/TFC.jpg') }}">
-    <link rel="manifest" href="/manifest.json">
-    <title>TFC | KULOB CITY</title>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-    <script src="https://unpkg.com/three@0.128.0/examples/js/postprocessing/EffectComposer.js"></script>
-    <script src="https://unpkg.com/three@0.128.0/examples/js/postprocessing/RenderPass.js"></script>
-    <script src="https://unpkg.com/three@0.128.0/examples/js/postprocessing/UnrealBloomPass.js"></script>
-    <script src="https://unpkg.com/three@0.128.0/examples/js/loaders/FontLoader.js"></script>
-    <script src="https://unpkg.com/three@0.128.0/examples/js/geometries/TextGeometry.js"></script>
+    <title>TFC | Tajik Fried Fish & Chicken</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.2/gsap.min.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Fira+Sans+Extra+Condensed:ital,wght@1,900&family=Montserrat:wght@400;700;900&display=swap');
-        #canvas-container { pointer-events: none; } /* Prevent canvas from capturing clicks */
         
         :root {
             --tfc-red: #ff0000;
@@ -554,8 +610,8 @@ HTML_TEMPLATE = r"""
             --live-status-chip-icon-color-pending: #fff;
             --live-status-chip-text-muted: rgba(0,0,0,0.4);
             --live-status-chip-text-main: #333;
-            --customer-id-badge-bg: rgba(255,255,255,0.1);
-            --customer-id-badge-border: rgba(255,255,255,0.2);
+            --customer-id-badge-bg: rgba(0, 0, 0, 0.5);
+            --customer-id-badge-border: rgba(255, 255, 255, 0.1);
             --customer-id-badge-color: white;
             --top-btn-bg: rgba(255,255,255,0.1);
             --top-btn-border: rgba(255,255,255,0.14);
@@ -685,7 +741,8 @@ HTML_TEMPLATE = r"""
             position:fixed; top:20px; right:20px; z-index: 10000; color:white; width:48px; height:48px; 
             border-radius:50%; display:none; justify-content:center; align-items:center; 
             cursor:pointer; background: rgba(255,255,255,0.1); backdrop-filter: blur(12px);
-            border: 1px solid rgba(255,255,255,0.14);
+            background: rgba(0, 0, 0, 0.5); backdrop-filter: blur(12px);
+            border: 1px solid rgba(255,255,255,0.1);
             box-shadow: 0 4px 20px rgba(0,0,0,0.35);
             transition: background 0.25s ease, border-color 0.25s ease, transform 0.2s ease;
         }
@@ -698,7 +755,8 @@ HTML_TEMPLATE = r"""
             position:fixed; top:80px; right:20px; z-index: 10000; color:white; width:48px; height:48px; 
             border-radius:50%; display:none; justify-content:center; align-items:center; 
             cursor:pointer; background: rgba(255,255,255,0.1); backdrop-filter: blur(12px);
-            border: 1px solid rgba(255,255,255,0.14);
+            background: rgba(0, 0, 0, 0.5); backdrop-filter: blur(12px);
+            border: 1px solid rgba(255,255,255,0.1);
             box-shadow: 0 4px 20px rgba(0,0,0,0.35);
             transition: background 0.25s ease, border-color 0.25s ease, transform 0.2s ease;
         }
@@ -711,7 +769,8 @@ HTML_TEMPLATE = r"""
             position:fixed; top:140px; right:20px; z-index: 10000; color:white; width:48px; height:48px;
             border-radius:50%; display:none; justify-content:center; align-items:center;
             cursor:pointer; background: rgba(255,255,255,0.1); backdrop-filter: blur(12px);
-            border: 1px solid rgba(255,255,255,0.14);
+            background: rgba(0, 0, 0, 0.5); backdrop-filter: blur(12px);
+            border: 1px solid rgba(255,255,255,0.1);
             box-shadow: 0 4px 20px rgba(0,0,0,0.35);
             transition: all 0.25s ease;
         }
@@ -724,7 +783,8 @@ HTML_TEMPLATE = r"""
             position:fixed; top:200px; right:20px; z-index: 10000; color:white; width:48px; height:48px;
             border-radius:50%; display:none; justify-content:center; align-items:center;
             cursor:pointer; background: rgba(255,255,255,0.1); backdrop-filter: blur(12px);
-            border: 1px solid rgba(255,255,255,0.14);
+            background: rgba(0, 0, 0, 0.5); backdrop-filter: blur(12px);
+            border: 1px solid rgba(255,255,255,0.1);
             box-shadow: 0 4px 20px rgba(0,0,0,0.35);
             transition: all 0.25s ease;
         }
@@ -732,6 +792,12 @@ HTML_TEMPLATE = r"""
             background: rgba(255,255,255,0.16);
             border-color: rgba(255,215,0,0.45);
             transform: scale(1.05);
+        }
+        /* Стили махсус барои ID Badge: шаффофи дарк */
+        #customer-id-badge {
+            background: var(--customer-id-badge-bg) !important;
+            border-color: var(--customer-id-badge-border) !important;
+            color: var(--customer-id-badge-color) !important;
         }
 
         /* Match sign-in widget to same glass / pill language as sign-out & back buttons */
@@ -797,9 +863,9 @@ HTML_TEMPLATE = r"""
             --review-input-border: #e0e0e0;
             --notif-item-bg: #ffffff;
             --notif-item-border-left: #e4002b;
-            --modal-bg-gradient-from: #fefefe;
+            --modal-bg-gradient-from: #f5f5f5;
             --modal-bg-gradient-mid: #ffffff;
-            --modal-bg-gradient-to: #fefefe;
+            --modal-bg-gradient-to: #e8e8e8;
             --modal-border: #e0e0e0;
             --modal-header-border: #f0f0f0;
             --modal-text-color: #000000;
@@ -823,9 +889,9 @@ HTML_TEMPLATE = r"""
             --live-status-chip-icon-color-pending: #fff;
             --live-status-chip-text-muted: rgba(0,0,0,0.6);
             --live-status-chip-text-main: #000;
-            --customer-id-badge-bg: #ffffff;
+            --customer-id-badge-bg: rgba(0, 0, 0, 0.5);
             --customer-id-badge-border: #e0e0e0;
-            --customer-id-badge-color: #000;
+            --customer-id-badge-color: #ffffff;
             --top-btn-bg: #ffffff;
             --top-btn-border: #e0e0e0;
             --top-btn-color: #000;
@@ -857,6 +923,82 @@ HTML_TEMPLATE = r"""
         body.light-active .glass-panel {
             background: rgba(255, 255, 255, 0.9) !important;
             border-color: rgba(0, 0, 0, 0.1) !important;
+        }
+
+        /* Ранги сурхи зебо барои иконкаҳои категория ва чаҳорчӯбаи онҳо дар режими рӯшноӣ */
+        body.light-active .category-card {
+            border: 1px solid rgba(228, 0, 43, 0.15) !important;
+            box-shadow: 0 10px 30px rgba(228, 0, 43, 0.15) !important;
+        }
+        body.light-active .category-card i {
+            color: #e4002b !important;
+            filter: drop-shadow(0 0 10px rgba(228, 0, 43, 0.5)) !important;
+        }
+
+        /* Тугмаҳои поёнӣ (сабад ва занг) дар режими рӯшноӣ: замина сурх ва иконкаҳо зард */
+        body.light-active #cart-btn,
+        body.light-active #phone-order-btn {
+            background-color: #e4002b !important;
+            color: #ffd700 !important;
+        }
+
+        /* Тугмаҳои болоӣ (баромад, хабарҳо, мавзӯъ) дар режими рӯшноӣ: сиёҳ мисли ID */
+        body.light-active #sign-out-btn,
+        body.light-active #notif-bell-btn,
+        body.light-active #theme-toggle-btn {
+            background-color: rgba(0, 0, 0, 0.5) !important;
+            color: #e4002b !important;
+        }
+
+        /* Танзимоти матн ва хатҳо дар модалҳо барои режими рӯшноӣ */
+        body.light-active .order-modal h2,
+        body.light-active .order-modal h3,
+        body.light-active .order-modal h4,
+        body.light-active .order-modal p,
+        body.light-active .order-modal label,
+        body.light-active .order-modal span:not(.text-yellow-400):not(.text-red-500):not(.text-emerald-400) {
+            color: #000000 !important;
+        }
+        body.light-active .order-modal .text-white\/40,
+        body.light-active .order-modal .text-white\/60,
+        body.light-active .order-modal .text-white\/70 {
+            color: rgba(0, 0, 0, 0.5) !important;
+        }
+        body.light-active .order-modal .border-white\/10 {
+            border-color: rgba(0, 0, 0, 0.08) !important;
+        }
+
+        /* Танзимоти махсус барои модалҳои динамикӣ (Внимание, Доставка, Оплата) дар режими рӯшноӣ */
+        body.light-active .bg-zinc-900 {
+            background-color: #ffffff !important;
+            background-image: linear-gradient(160deg, #f5f5f5 0%, #ffffff 50%, #e8e8e8 100%) !important;
+            border-color: rgba(0, 0, 0, 0.1) !important;
+            box-shadow: 0 25px 50px rgba(0,0,0,0.1) !important;
+        }
+        body.light-active .bg-zinc-900 h2,
+        body.light-active .bg-zinc-900 p,
+        body.light-active .bg-zinc-900 span:not(.text-yellow-400):not(.text-red-500),
+        body.light-active .bg-zinc-900 label {
+            color: #000000 !important;
+        }
+        body.light-active .bg-zinc-900 .text-white\/60,
+        body.light-active .bg-zinc-900 .text-white\/40 {
+            color: rgba(0, 0, 0, 0.6) !important;
+        }
+        body.light-active .bg-zinc-900 .bg-white\/5,
+        body.light-active .bg-zinc-900 .bg-black\/20 {
+            background-color: rgba(0, 0, 0, 0.05) !important;
+            border-color: rgba(0, 0, 0, 0.1) !important;
+        }
+        body.light-active .bg-zinc-900 textarea {
+            background-color: #f9f9f9 !important;
+            color: #000000 !important;
+            border-color: rgba(0, 0, 0, 0.1) !important;
+        }
+        /* Ранги паси модалҳо дар режими рӯшноӣ (Backdrop) */
+        body.light-active .bg-black\/80,
+        body.light-active .bg-black\/90 {
+            background-color: rgba(255, 255, 255, 0.6) !important;
         }
 
         /* Intro Section - remains dark */
@@ -1449,16 +1591,6 @@ HTML_TEMPLATE = r"""
             100% { box-shadow: 0 0 0 0 rgba(228, 0, 43, 0); }
         }
 
-        /* PWA Install Banner Style */
-        #pwa-install-banner {
-            position: fixed; top: 20px; left: 50%; transform: translateX(-50%) translateY(-150%);
-            z-index: 10001; background: white; color: #333; width: 90%; max-width: 400px;
-            padding: 12px 16px; border-radius: 24px; display: flex; align-items: center; gap: 12px;
-            box-shadow: 0 15px 40px rgba(0,0,0,0.4); border-left: 6px solid #ff0000;
-            transition: transform 0.6s cubic-bezier(0.34, 1.56, 0.64, 1);
-        }
-        #pwa-install-banner.show { transform: translateX(-50%) translateY(0); }
-        #pwa-install-banner button:first-of-type { animation: buttonPulse 2s infinite; }
     </style>
 </head>
 <body>
@@ -1476,36 +1608,18 @@ HTML_TEMPLATE = r"""
         <i id="theme-icon" class="fas fa-moon"></i>
         <span class="sr-only">Сменить тему</span>
     </div>
-    <!-- PWA Install Banner HTML -->
-    <div id="pwa-install-banner">
-        <div class="w-12 h-12 rounded-2xl overflow-hidden shadow-md flex-shrink-0">
-            <img src="/static/images/TFC.jpg" alt="TFC" class="w-full h-full object-cover">
-        </div>
-        <div class="flex-1">
-            <p class="text-[10px] uppercase font-black text-red-600 tracking-widest">TFC App</p>
-            <p class="text-xs font-bold text-gray-800">Установить TFC на телефон?</p>
-        </div>
-        <button onclick="installTFC()" class="bg-red-600 text-white px-4 py-2.5 rounded-xl text-[10px] font-black active:scale-90 transition shadow-lg shadow-red-500/30">УСТАНОВИТЬ</button>
-        <button onclick="hideInstallBanner()" class="text-gray-400 px-1"><i class="fa-solid fa-xmark"></i></button>
-    </div>
 
-    <!-- Экрани боркунии нав ва синамоӣ -->
-    <section id="loading-screen" class="fixed inset-0 z-[10005] bg-black flex flex-col items-center justify-center overflow-hidden">
-        <div class="mb-10 opacity-0 tfc-loader-logo">
-            <img src="/static/images/TFC.jpg" class="w-20 h-20 rounded-2xl shadow-[0_0_30px_rgba(255,0,0,0.5)] border border-white/10">
-        </div>
-        <div class="w-48 h-[2px] bg-white/5 rounded-full overflow-hidden mb-4">
-            <div id="loader-progress" class="w-0 h-full bg-red-600 shadow-[0_0_15px_rgba(255,0,0,0.8)]"></div>
-        </div>
-    </section>
-
-    <div id="customer-id-badge" class="hidden fixed top-5 left-4 z-[10000] bg-white/10 text-white px-4 py-2 rounded-full border border-white/20 text-sm font-bold backdrop-blur-md"></div>
+    <div id="customer-id-badge" class="hidden fixed top-5 left-4 z-[10000] px-4 py-2 rounded-full border text-sm font-bold backdrop-blur-md"></div>
 
     <div id="live-status-chip" class="live-status-chip"></div>
 
     <div id="cart-btn" onclick="showCart()" class="fixed bottom-5 left-4 z-[10000] bg-red-600 text-white w-14 h-14 rounded-full flex items-center justify-center shadow-2xl border-2 border-white/20 active:scale-90 transition-all cursor-pointer">
         <i class="fa-solid fa-cart-shopping text-xl"></i>
         <span id="cart-count" class="absolute -top-1 -right-1 bg-yellow-400 text-black text-[10px] font-black min-w-[24px] h-6 px-1 rounded-full flex items-center justify-center border-2 border-red-600 hidden">0</span>
+    </div>
+    <!-- NEW PHONE ORDER BUTTON -->
+    <div id="phone-order-btn" onclick="showPhoneOrderModal()" class="fixed bottom-24 left-4 z-[10000] bg-blue-600 text-white w-14 h-14 rounded-full flex items-center justify-center shadow-2xl border-2 border-white/20 active:scale-90 transition-all cursor-pointer">
+        <i class="fa-solid fa-phone text-xl"></i>
     </div>
 
     <!-- CART MODAL OVERLAY -->
@@ -1523,10 +1637,12 @@ HTML_TEMPLATE = r"""
             <div class="px-6 py-4 border-b border-white/10 bg-white/5">
                 <label class="block text-[10px] font-black uppercase tracking-widest mb-2" style="color: var(--tfc-gold);">Номер телефона (для связи и оплаты):</label>
                 <input id="cart-customer-phone" type="tel" placeholder="+992 _________" 
-                       class="w-full px-4 py-3 rounded-xl border border-white/10 bg-black/20 text-white focus:ring-2 focus:ring-yellow-400 outline-none transition font-bold text-lg">
+                       class="w-full px-4 py-3 rounded-xl border border-white/10 bg-black/20 text-white focus:ring-2 focus:ring-yellow-400 outline-none transition font-bold text-lg"
+                       maxlength="9">
+                <span id="cart-phone-error" class="text-red-500 text-xs mt-1 hidden">Пожалуйста, введите 9 цифр.</span>
             </div>
             <div class="px-6 py-5 max-h-[40vh] overflow-y-auto" id="cart-items-list">
-                <!-- Cart items will be injected here -->
+                <!-- Cart items will be injected here --> 
             </div>
             <div class="px-6 py-4 border-t border-white/10">
                 <div class="flex justify-between items-center mb-4">
@@ -1536,6 +1652,55 @@ HTML_TEMPLATE = r"""
                 <button onclick="confirmFullCartOrder(event)" class="w-full py-4 rounded-xl font-black text-lg shadow-lg active:scale-95 transition" style="background: var(--modal-confirm-btn-bg); color: var(--modal-confirm-btn-color);">
                     ОФОРМИТЬ ЗАКАЗ
                 </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- PHONE ORDER MODAL OVERLAY -->
+    <div id="phone-order-modal-overlay" class="order-modal-overlay">
+        <div class="order-modal">
+            <div class="px-6 py-5 border-b border-white/10 flex items-start justify-between">
+                <div>
+                    <p class="text-xs uppercase tracking-[3px] text-white/40">Связь с нами</p>
+                    <h3 class="text-2xl font-black mt-1">Заказ по телефону</h3>
+                </div>
+                <button onclick="closePhoneOrderModal()" class="w-10 h-10 rounded-full transition" style="background: var(--modal-qty-btn-bg); color: var(--modal-qty-btn-color);">
+                    <i class="fa-solid fa-xmark"></i>
+                </button>
+            </div>
+            <div class="px-6 py-5 text-center">
+                <div class="w-20 h-20 bg-blue-600/20 text-blue-400 rounded-full flex items-center justify-center mx-auto mb-6 text-4xl shadow-[0_0_30px_rgba(59,130,246,0.2)]">
+                    <i class="fa-solid fa-phone-volume"></i>
+                </div>
+                <p class="text-white/60 text-sm mb-6 leading-relaxed">
+                    Для оформления заказа или получения консультации, пожалуйста, позвоните нам.
+                </p>
+                <a href="tel:754169090" class="w-full py-4 bg-blue-600 text-white font-black rounded-2xl active:scale-95 transition shadow-lg shadow-blue-500/20 uppercase tracking-widest text-xs flex items-center justify-center gap-2">
+                    <i class="fas fa-phone"></i> ЗВОНИТЬ И ЗАКАЗАТЬ
+                </a>
+            </div>
+        </div>
+    </div>
+
+    <!-- МОДАЛИ ТАСДИҚИ НЕСТ КАРДАНИ ХАБАРҲО -->
+    <div id="notif-clear-modal-overlay" class="order-modal-overlay">
+        <div class="order-modal">
+            <div class="px-6 py-8 text-center">
+                <div class="w-20 h-20 bg-red-600/20 text-red-600 rounded-full flex items-center justify-center mx-auto mb-6 text-4xl shadow-[0_0_30px_rgba(228,0,43,0.2)]">
+                    <i class="fa-solid fa-trash-can"></i>
+                </div>
+                <h2 class="text-xl font-black mb-2 uppercase tracking-tight">ОЧИСТИТЬ ИСТОРИЮ?</h2>
+                <p class="text-sm opacity-60 mb-8 leading-relaxed">
+                    Вы действительно хотите удалить все уведомления? Это действие нельзя отменить.
+                </p>
+                <div class="flex flex-col gap-3">
+                    <button onclick="executeClearNotifications()" class="w-full py-4 bg-red-600 text-white font-black rounded-2xl active:scale-95 transition shadow-lg shadow-red-500/20 uppercase tracking-widest text-xs">
+                        УДАЛИТЬ СРАЗУ
+                    </button>
+                    <button onclick="closeNotifClearModal()" class="w-full py-4 bg-white/10 text-white/60 font-black rounded-2xl active:scale-95 transition uppercase tracking-widest text-xs">
+                        ОТМЕНА
+                    </button>
+                </div>
             </div>
         </div>
     </div>
@@ -1551,16 +1716,14 @@ HTML_TEMPLATE = r"""
                     <i class="fa-solid fa-xmark"></i>
                 </button>
             </div>
-            <div class="px-6 py-5 space-y-5">
-                <div style="border-radius: 24px; overflow: hidden; background: #000; width: 100%; aspect-ratio: 16 / 10; max-height: 350px; display: flex; align-items: center; justify-content: center; box-shadow: 0 10px 30px rgba(0,0,0,0.3);">
-                    <img id="info-food-image" src="" alt="" style="width: 100%; height: 100%; object-fit: cover;">
+            <div class="px-6 py-4 space-y-4 max-h-[75vh] overflow-y-auto">
+                <img id="info-food-image" src="" alt="" class="w-full max-h-64 object-contain rounded-2xl border border-white/10 bg-black/10 mx-auto" style="height: auto;">
+                <div class="p-3 rounded-2xl bg-white/5 border border-white/10">
+                    <div id="info-food-description" class="text-xs leading-relaxed whitespace-pre-wrap" style="color: var(--modal-text-muted);"></div>
                 </div>
-                <div class="p-4 rounded-3xl bg-white/5 border border-white/10">
-                    <div id="info-food-description" class="text-sm leading-relaxed whitespace-pre-wrap" style="color: var(--modal-text-muted);"></div>
-                </div>
-                <div class="p-4 rounded-3xl bg-white/5 border border-white/10">
-                    <h4 class="text-base font-black mb-2">Цена</h4>
-                    <p id="info-food-price" class="text-lg font-black text-yellow-400"></p>
+                <div class="p-3 rounded-2xl bg-white/5 border border-white/10 flex justify-between items-center">
+                    <h4 class="text-sm font-black uppercase tracking-widest opacity-60">Цена</h4>
+                    <p id="info-food-price" class="text-xl font-black text-yellow-400"></p>
                 </div>
             </div>
         </div>
@@ -1579,9 +1742,11 @@ HTML_TEMPLATE = r"""
             </div>
             <div class="px-6 py-5">
                 <div class="mb-4">
-                    <label class="block text-sm mb-2 font-bold" style="color: var(--tfc-gold);">Введите номер (Используйте тот же номер, с которого будете оплачивать в D.City):</label>
-                    <input id="modal-customer-phone" type="tel" placeholder="+992 _________" 
-                           class="w-full px-4 py-3 rounded-xl border border-white/10 bg-white/5 text-white focus:ring-2 focus:ring-yellow-400 outline-none transition">
+                    <label class="block text-sm mb-2 font-bold" style="color: var(--tfc-gold);">Введите ваш номер телефона:</label>
+                    <input id="modal-customer-phone" name="user_ph_no_fill" type="tel" placeholder="+992 _________" autocomplete="new-password" 
+                           class="w-full px-4 py-3 rounded-xl border border-white/10 bg-white/5 text-white focus:ring-2 focus:ring-yellow-400 outline-none transition"
+                           maxlength="9">
+                    <span id="modal-phone-error" class="text-red-500 text-xs mt-1 hidden">Пожалуйста, введите 9 цифр.</span>
                 </div>
                 <p class="text-sm mb-3" style="color: var(--modal-text-muted);">Пожалуйста, выберите:</p>
                 <div id="size-options" class="grid grid-cols-2 gap-3 mb-4"></div>
@@ -1600,8 +1765,8 @@ HTML_TEMPLATE = r"""
                 <p class="text-sm" style="color: var(--modal-text-muted);">Итого: <span id="modal-total" class="font-black text-lg" style="color: var(--tfc-gold);">0 сомони</span></p>
             </div>
             <div class="px-6 py-4 flex gap-3" style="background: var(--modal-footer-bg);">
-                <button onclick="addToCart()" class="flex-1 py-3 rounded-xl font-bold" style="background: var(--modal-cancel-btn-bg); color: var(--modal-qty-btn-color);">В корзину</button>
-                <button onclick="confirmOrderFromModal(event)" class="flex-1 py-3 rounded-xl font-black" style="background: var(--modal-confirm-btn-bg); color: var(--modal-confirm-btn-color);">Подтвердить и отправить</button>
+                <button onclick="addToCart()" class="flex-1 py-3 rounded-xl font-bold text-xs" style="background: var(--modal-cancel-btn-bg); color: var(--modal-qty-btn-color);">В КОРЗИНУ</button>
+                <button onclick="confirmOrderFromModal(event)" class="flex-1 py-3 rounded-xl font-black text-xs" style="background: var(--modal-confirm-btn-bg); color: var(--modal-confirm-btn-color);">ЗАКАЗАТЬ</button>
             </div>
         </div>
     </div>
@@ -1609,7 +1774,7 @@ HTML_TEMPLATE = r"""
     <section id="auth-section" class="fixed inset-0 auth-gradient-bg z-[9999] flex flex-col items-center justify-center">
         <div class="text-center mb-6">
             <h1 class="tfc-main-title">TFC</h1>
-            <div class="kulob-tag-mini">KULOB CITY</div> 
+            <div class="kulob-tag-mini">Tajik Fried Fish & Chicken</div> 
         </div>
 
         <div class="glass-panel text-center">
@@ -1618,7 +1783,8 @@ HTML_TEMPLATE = r"""
             
             <div id="login-container">
                 <input id="auth-name-input" type="text" placeholder="Имя и Фамилия" 
-                       class="w-full px-4 py-4 rounded-2xl border border-white/20 bg-white/10 text-white mb-6 focus:ring-2 focus:ring-yellow-400 outline-none text-center text-xl font-bold transition-all">
+                       class="w-full px-4 py-4 rounded-2xl border border-white/20 bg-white/10 text-white mb-6 focus:ring-2 focus:ring-yellow-400 outline-none text-center text-xl font-bold transition-all"
+                       maxlength="100">
                 <button id="login-btn" class="w-full py-4 bg-yellow-400 text-black font-black rounded-2xl active:scale-95 transition-all shadow-lg shadow-yellow-400/20 uppercase text-xs tracking-widest" onclick="handleSimpleLogin()">
                     Войти в меню
                 </button>
@@ -1632,7 +1798,6 @@ HTML_TEMPLATE = r"""
     <main id="main-content" class="hidden">
     <!-- Intro Section -->
     <section id="intro-section">
-        <div id="canvas-container" class="absolute inset-0 z-0"></div>
         <div class="text-center -mt-32" style="color: var(--text-body);">
             <h1 class="tfc-main-title">TFC</h1>
             <div class="tfc-divider"></div>
@@ -1667,7 +1832,7 @@ HTML_TEMPLATE = r"""
                     <h3>Летнее меню</h3>
                 </div>
                 <div class="category-card" onclick="showCombo()">
-                    <i class="fa-solid fa-box-open"></i>
+                    <i class="fa-solid fa-fire-flame-curved"></i>
                     <h3>Комбо</h3>
                 </div>
             </div>
@@ -1736,7 +1901,7 @@ HTML_TEMPLATE = r"""
 
                 <!-- Row 4: Drinks (Full Width) -->
                 <div class="category-card col-span-2 hover:shadow-[0_0_20px_rgba(0,191,255,0.3)] transition-all" onclick="filterMenu('Напитки')">
-                    <span class="text-6xl mb-2 block">🥤</span>
+                    <span class="text-6xl mb-2 block">☕</span>
                     <h3>Напитки</h3>
                 </div>
             </div>
@@ -1854,12 +2019,28 @@ HTML_TEMPLATE = r"""
     <section id="pizza-section" class="content-section" style="display: none;">
         <div class="max-w-7xl mx-auto">
             <div class="flex justify-center mb-10" style="color: var(--text-body);">
-                <button onclick="hidePizza()" class="back-btn">
+                <button id="pizza-main-back-btn" onclick="hidePizza()" class="back-btn">
                     <i class="fa-solid fa-arrow-left"></i> <span>В ГЛАВНОЕ МЕНЮ</span>
                 </button>
+                <button id="pizza-category-back-btn" onclick="showPizza()" class="back-btn" style="display: none;">
+                    <i class="fa-solid fa-rotate-left"></i> <span>К КАТЕГОРИЯМ</span>
+                </button>
             </div>
-            <h2 class="text-5xl font-black text-center mb-12 tracking-widest" style="color: var(--tfc-gold);">ПИЦЦА</h2>
-            <div class="grid product-grid gap-8">
+            <h2 class="text-5xl font-black text-center mb-8 tracking-widest" style="color: var(--tfc-gold);">ПИЦЦА</h2>
+            
+            <!-- Sub-category cards for "Пицца" -->
+            <div id="pizza-subcategories" class="grid grid-cols-2 gap-4 md:gap-8 mb-12 page-transition" style="display: none;">
+                <div class="category-card hover:shadow-[0_0_20px_rgba(255,215,0,0.3)] transition-all" onclick="filterPizza('Пицца')">
+                    <span class="text-6xl mb-2 block">🍕</span>
+                    <h3>Пицца</h3>
+                </div>
+                <div class="category-card hover:shadow-[0_0_20px_rgba(255,215,0,0.3)] transition-all" onclick="filterPizza('Хачапури')">
+                    <span class="text-6xl mb-2 block">🧀</span>
+                    <h3>Хачапури</h3>
+                </div>
+            </div>
+
+            <div id="pizza-filtered-product-grid" class="grid product-grid gap-8">
                 {% for food in categories.get('Пицца', []) %}
                 <div class="product-card food-card" data-food-id="{{ food.id }}" data-name="{{ food.name }}" data-subcategory="{{ food.subcategory|default('') }}" data-description="{{ food.description|e }}">
                     <img src="{{ url_for('static', filename='images/' + food.image_url) if food.image_url else '' }}" alt="{{ food.name }}">
@@ -2088,23 +2269,43 @@ HTML_TEMPLATE = r"""
             <div class="glass-panel !w-full !max-w-full !opacity-100 !transform-none !p-0 overflow-hidden border-white/10 shadow-[0_30px_100px_rgba(0,0,0,0.6)] flex flex-col items-center">
                 <div class="p-8 flex flex-col items-center justify-center text-center w-full" style="background: linear-gradient(to bottom right, rgba(255,255,255,0.03), transparent);">
                     <h2 class="text-2xl sm:text-3xl md:text-4xl font-black mb-1 tracking-tighter" style="color: var(--tfc-gold);">НАШЕ МЕСТОПОЛОЖЕНИЕ</h2> <!-- Use variable for color -->
-                    <p class="uppercase tracking-widest text-[9px] mb-8 font-bold opacity-40">Tajik Fried Chicken • Kulob City</p>
+                    <p class="uppercase tracking-widest text-[9px] mb-8 font-bold opacity-40">Tajik Fried Fish & Chicken</p>
                     
-                    <div class="space-y-6 w-full">
-                        <div class="flex flex-col items-center gap-3">
-                            <div class="w-12 h-12 rounded-2xl flex items-center justify-center border" style="background: rgba(255,215,0,0.1); color: var(--tfc-gold); border-color: rgba(255,215,0,0.2);">
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 w-full">
+                        <!-- Филиал 1: Базар Сомони -->
+                        <div class="p-5 rounded-3xl bg-white/5 border border-white/10 text-center flex flex-col items-center">
+                            <div class="w-12 h-12 rounded-2xl flex items-center justify-center border mb-4" style="background: rgba(255,215,0,0.1); color: var(--tfc-gold); border-color: rgba(255,215,0,0.2);">
                                 <i class="fa-solid fa-location-dot text-xl"></i>
                             </div>
-                            <h4 class="font-bold text-lg mb-1" style="color: var(--text-body);">Адрес</h4>
-                            <p class="text-sm max-w-xs mx-auto opacity-60">г. Куляб, Доми Адолат, Кафе 10 мкр, возле парка Сафар Амиршоев</p>
+                            <h4 class="font-bold text-lg mb-2" style="color: var(--text-body);">Базар Сомони</h4>
+                            <p class="text-[11px] opacity-70 mb-3">📍 г. Куляб, базар Сомони</p>
+                            <div class="flex flex-col items-center gap-2 mb-4">
+                                <div class="flex items-center gap-2 text-sm font-bold text-emerald-500">
+                                    <i class="fa-solid fa-phone"></i>
+                                    <a href="tel:944975050">944975050</a>
+                                </div>
+                                <div class="px-3 py-1 rounded-full bg-white/5 border border-white/5 text-[9px] uppercase tracking-widest opacity-50">
+                                    <i class="fa-solid fa-clock mr-1"></i> Работаем: 8:00 — 01:00
+                                </div>
+                            </div>
                         </div>
 
-                        <div class="flex flex-col items-center gap-3">
-                            <div class="w-12 h-12 rounded-2xl flex items-center justify-center border" style="background: rgba(255,0,0,0.1); color: var(--tfc-red); border-color: rgba(255,0,0,0.2);">
-                                <i class="fa-solid fa-phone text-xl"></i>
+                        <!-- Филиал 2: Дом Адолат -->
+                        <div class="p-5 rounded-3xl bg-white/5 border border-white/10 text-center flex flex-col items-center">
+                            <div class="w-12 h-12 rounded-2xl flex items-center justify-center border mb-4" style="background: rgba(255,215,0,0.1); color: var(--tfc-gold); border-color: rgba(255,215,0,0.2);">
+                                <i class="fa-solid fa-location-dot text-xl"></i>
                             </div>
-                            <h4 class="font-bold text-lg mb-1" style="color: var(--text-body);">Телефон</h4>
-                            <a href="tel:754169090" class="text-sm transition-colors opacity-60 hover:opacity-100">754169090</a>
+                            <h4 class="font-bold text-lg mb-2" style="color: var(--text-body);">Дом АДОЛАТ «TFC»</h4>
+                            <p class="text-[11px] opacity-70 mb-3">📍 г. Куляб, дом АДОЛАТ «TFC»</p>
+                            <div class="flex flex-col items-center gap-2 mb-4">
+                                <div class="flex items-center gap-2 text-sm font-bold text-emerald-500">
+                                    <i class="fa-solid fa-phone"></i>
+                                    <a href="tel:754169090">754169090</a>
+                                </div>
+                                <div class="px-3 py-1 rounded-full bg-white/5 border border-white/5 text-[9px] uppercase tracking-widest opacity-50">
+                                    <i class="fa-solid fa-clock mr-1"></i> Работаем: 10:00 — 23:00
+                                </div>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -2190,82 +2391,83 @@ HTML_TEMPLATE = r"""
     </main>
     <script>
         document.addEventListener("DOMContentLoaded", () => {
-
-            // Аниматсияи синамоӣ барои экрани боркунӣ
-            const mainLoadingTimeline = gsap.timeline();
-            
-            // 1. Пайдо шудани логотип
-            mainLoadingTimeline.fromTo(".tfc-loader-logo", 
-                { opacity: 0, scale: 0.8, y: 10 }, 
-                { opacity: 1, scale: 1, y: 0, duration: 1, ease: "power2.out" }
-            );
-            
-            // 2. Пур шудани хати прогресс дар давоми 3 сония
-            mainLoadingTimeline.to("#loader-progress", { width: "100%", duration: 3, ease: "none" }, 0); // Оғози хати прогресс дарҳол
-
-            // Эффекти набзи логотип
-            gsap.to(".tfc-loader-logo", { scale: 1.05, duration: 1.5, repeat: -1, yoyo: true, ease: "power1.inOut" });
-            
-            // Таймери хомӯш кардани лоадер (3 сония)
-            setTimeout(() => {
-                const loader = document.getElementById('loading-screen');
-                if (loader) {
-                    gsap.to(loader, { opacity: 0, duration: 0.8, onComplete: () => loader.remove() });
-                }
-            }, 3000);
-
             if (localStorage.getItem("tfc_session")) showApp();
             else {
-                // Агар корбар сабт нашуда бошад, баъди 3 сония auth-section-ро нишон медиҳем
-                setTimeout(() => {
-                    const auth = document.getElementById('auth-section');
-                    if (auth) { auth.classList.remove('hidden'); }
-                }, 3000);
+                const auth = document.getElementById('auth-section');
+                if (auth) auth.classList.remove('hidden');
             }
         });
 
         // Пайваст кардани Fullscreen ба тамоми экран ва экрани боркунӣ
         async function triggerFullScreen() {
+            // Агар аллакай дар режими пурра бошад, ягон кор намекунем
+            if (document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement || document.msFullscreenElement) {
+                cleanFullScreenEvents();
+                return;
+            }
+
             const docEl = document.documentElement;
             const requestFs = docEl.requestFullscreen || docEl.mozRequestFullScreen || docEl.webkitRequestFullscreen || docEl.msRequestFullscreen;
 
-            
-            try {
-                // Фаъол кардани Full Screen (ин сатрҳои браузерро пинҳон мекунад)
-                if (requestFs && !document.fullscreenElement) {
+            if (requestFs) {
+                try {
                     await requestFs.call(docEl);
+                    cleanFullScreenEvents();
+                    // Қулф кардани экран ба ҳолати албомӣ барои намуди беҳтар
+                    if (screen.orientation && screen.orientation.lock) {
+                        await screen.orientation.lock('landscape').catch(() => {});
+                    }
+                } catch (err) {
+                    // Игнори хатогӣ, агар браузер иҷозат надиҳад
                 }
-            } catch (err) {
-                // Баъзе браузерҳо шояд иҷозат надиҳанд
-                console.error("Full screen error:", err);
-            } finally {
-                // Танҳо агар Fullscreen воқеан фаъол шуда бошад, листенерҳоро нест мекунем
-                if (document.fullscreenElement) {
-                    document.removeEventListener('click', triggerFullScreen);
-                    document.removeEventListener('touchstart', triggerFullScreen);
-                    document.getElementById('loading-screen').removeEventListener('click', triggerFullScreen);
-                    const mainContent = document.getElementById('main-content');
-                    if (mainContent) mainContent.removeEventListener('click', triggerFullScreen);
-                    const authSection = document.getElementById('auth-section');
-                    if (authSection) authSection.removeEventListener('click', triggerFullScreen);
-                }
+            }
+        }
+
+        function cleanFullScreenEvents() {
+            document.removeEventListener('click', triggerFullScreen);
+            document.removeEventListener('touchstart', triggerFullScreen);
+            const mainContent = document.getElementById('main-content');
+            if (mainContent) {
+                mainContent.removeEventListener('click', triggerFullScreen);
+                mainContent.removeEventListener('touchstart', triggerFullScreen);
+            }
+            const authSection = document.getElementById('auth-section');
+            if (authSection) {
+                authSection.removeEventListener('click', triggerFullScreen);
+                authSection.removeEventListener('touchstart', triggerFullScreen);
             }
         }
 
         function handleSimpleLogin() {
             const nameInput = document.getElementById('auth-name-input');
             const fullName = nameInput.value.trim();
+            const words = fullName.split(/\s+/).filter(w => w.length > 0);
 
-            if (fullName.length < 3) {
-                alert("Пожалуйста, введите ваше полное имя и фамилию.");
+            // 1. Тафтиши мавҷудияти Ном ва Насаб (на кам аз 2 калима)
+            if (words.length < 2) { // Changed from fullName.length < 3 to words.length < 2
+                alert("Лутфан ҳам Ном ва ҳам Насабро ворид кунед.");
                 return;
             }
 
-            // Проверка на заглавные буквы (Caps Lock)
-            const hasLetters = /[а-яёА-ЯЁ]/.test(fullName);
-            if (hasLetters && fullName === fullName.toUpperCase()) {
-                alert("Пожалуйста, не пишите всё заглавными буквами. Например так: Баротов Юсуф");
+            // 2. Тафтиши ҳарфҳои англисӣ (танҳо кириллица иҷозат аст)
+            if (/[a-zA-Z]/.test(fullName)) {
+                alert("Лутфан танҳо бо ҳарфҳои кириллӣ (русӣ/тоҷикӣ) нависед. Ҳарфҳои англисӣ манъ аст."); // Changed error message
                 return;
+            }
+
+            // 3. Тафтиши ҳарфи аввали калон ва Caps Lock барои ҳар як калима
+            for (const word of words) {
+                if (word.length === 0) continue; // Skip empty strings from split
+
+                if (word[0] !== word[0].toUpperCase()) {
+                    alert(`Калимаи "${word}" бояд бо ҳарфи калон сар шавад.`);
+                    return;
+                }
+                // Тафтиш мекунем, ки оё баъд аз ҳарфи аввал ягон ҳарфи калон ҳаст
+                if (word.length > 1 && word.substring(1) !== word.substring(1).toLowerCase()) {
+                    alert(`Лутфан танҳо ҳарфи аввали калимаро калон нависед: "${word}". Мисол: Баротов`);
+                    return;
+                }
             }
 
             // МАҲЗ ДАР ҲАМИН ҶО: вақте корбар тугмаро зер мекунад, 
@@ -2278,6 +2480,14 @@ HTML_TEMPLATE = r"""
             
             localStorage.setItem("tfc_customer_profile", JSON.stringify(profile));
             localStorage.setItem("tfc_session", fullName);
+
+            // Регистрация пользователя на сервере
+            fetch('/api/customers/register', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ full_name: fullName, customer_id: generatedId })
+            }).catch(e => console.error("Reg error:", e));
+
             showApp();
         }
 
@@ -2312,10 +2522,12 @@ HTML_TEMPLATE = r"""
             phoneOverlay.innerHTML = `
                 <div class="glass-panel text-center !opacity-100 !transform-none">
                     <h2 class="text-xl font-black text-white mb-2">Вход по номеру</h2>
-                    <p class="text-white/60 text-xs mb-6">Введите ваш номер телефона</p>
+                    <p class="text-white/60 text-xs mb-4">Введите ваш номер телефона</p>
                     <input id="auth-phone-input" type="tel" placeholder="+992 _________" 
-                           class="w-full px-4 py-4 rounded-2xl border border-white/10 bg-white/5 text-white mb-4 focus:ring-2 focus:ring-yellow-400 outline-none text-center text-lg font-bold">
-                    <button id="send-sms-btn" class="phone-signin-btn !mt-0 !max-w-full">Получить код</button>
+                           class="w-full px-4 py-4 rounded-2xl border border-white/10 bg-white/5 text-white focus:ring-2 focus:ring-yellow-400 outline-none text-center text-lg font-bold"
+                           maxlength="9">
+                    <span id="auth-phone-error" class="text-red-500 text-xs mt-1 hidden">Пожалуйста, введите 9 цифр.</span>
+                    <button id="send-sms-btn" class="phone-signin-btn !mt-4 !max-w-full">Получить код</button>
                     <button onclick="document.getElementById('phone-auth-overlay').remove()" class="text-white/30 text-[10px] mt-4 uppercase tracking-widest">Отмена</button>
                 </div>
             `;
@@ -2323,8 +2535,14 @@ HTML_TEMPLATE = r"""
 
             document.getElementById('send-sms-btn').onclick = async () => {
                 const phone = document.getElementById('auth-phone-input').value.trim();
-                if (phone.length < 5) return alert("Введите номер!");
-                
+                if (!/^\d{9}$/.test(phone)) { // New validation for exactly 9 digits
+                    const phoneError = document.getElementById("auth-phone-error");
+                    phoneError.textContent = "Пожалуйста, введите 9 цифр.";
+                    phoneError.classList.remove("hidden");
+                    document.getElementById('auth-phone-input').focus();
+                    return;
+                }
+                document.getElementById("auth-phone-error").classList.add("hidden");
                 const btn = document.getElementById('send-sms-btn');
                 btn.disabled = true;
                 btn.textContent = "Отправка...";
@@ -2396,12 +2614,42 @@ HTML_TEMPLATE = r"""
             return null;
         }
 
-        function toggleTheme() {
-            document.body.classList.toggle('light-active');
-            const isLight = document.body.classList.contains('light-active');
-            const themeIcon = document.getElementById('theme-icon');
-            if (themeIcon) themeIcon.className = isLight ? 'fas fa-sun' : 'fas fa-moon';
-            localStorage.setItem('tfc_theme', isLight ? 'light' : 'dark');
+        function toggleTheme(event) {
+            const toggle = () => {
+                document.body.classList.toggle('light-active');
+                const isLight = document.body.classList.contains('light-active');
+                const themeIcon = document.getElementById('theme-icon');
+                if (themeIcon) themeIcon.className = isLight ? 'fas fa-sun' : 'fas fa-moon';
+                localStorage.setItem('tfc_theme', isLight ? 'light' : 'dark');
+            };
+
+            if (!document.startViewTransition) {
+                toggle();
+                return;
+            }
+
+            const x = event ? event.clientX : window.innerWidth / 2;
+            const y = event ? event.clientY : window.innerHeight / 2;
+            const endRadius = Math.hypot(Math.max(x, window.innerWidth - x), Math.max(y, window.innerHeight - y));
+
+            const transition = document.startViewTransition(toggle);
+
+            transition.ready.then(() => {
+                const clipPath = [
+                    `circle(0px at ${x}px ${y}px)`,
+                    `circle(${endRadius}px at ${x}px ${y}px)`,
+                ];
+                document.documentElement.animate(
+                    {
+                        clipPath: document.body.classList.contains('light-active') ? clipPath : [...clipPath].reverse(),
+                    },
+                    {
+                        duration: 650,
+                        easing: 'cubic-bezier(0.4, 0, 0.2, 1)',
+                        pseudoElement: document.body.classList.contains('light-active') ? '::view-transition-new(root)' : '::view-transition-old(root)',
+                    }
+                );
+            });
         }
 
         function showCustomerIdBadge(profile) {
@@ -2417,10 +2665,12 @@ HTML_TEMPLATE = r"""
             const idBadge = document.getElementById("customer-id-badge");
             const notifBtn = document.getElementById("notif-bell-btn");
             const themeToggleBtn = document.getElementById("theme-toggle-btn");
+            const phoneOrderBtn = document.getElementById("phone-order-btn");
             
             if (signOutBtn) signOutBtn.style.display = isVisible ? "flex" : "none";
             if (notifBtn) notifBtn.style.display = isVisible ? "flex" : "none";
             if (themeToggleBtn) themeToggleBtn.style.display = isVisible ? "flex" : "none";
+            if (phoneOrderBtn) phoneOrderBtn.style.display = isVisible ? "flex" : "none";
             
             if (isVisible) {
                 if (idBadge) idBadge.classList.remove("hidden");
@@ -2464,15 +2714,10 @@ HTML_TEMPLATE = r"""
             setTimeout(() => {
                 auth.classList.add('hidden');
                 document.getElementById('main-content').classList.remove('hidden');
-                // Агар Fullscreen фаъол набошад, листенерҳоро ба main-content илова мекунем
-                if (!document.fullscreenElement) {
-                    const mainContent = document.getElementById('main-content');
-                    if (mainContent) mainContent.addEventListener('click', triggerFullScreen);
-                    if (mainContent) mainContent.addEventListener('touchstart', triggerFullScreen);
-                }
                 showCustomerIdBadge(profile);
                 updateTopControlsByScroll();
                 startCustomerStatusPolling();
+                updateNotifBadge(); // Навсозии баҷ ҳангоми ворид шудан
             }, 0);
         }
     </script>
@@ -2503,7 +2748,7 @@ HTML_TEMPLATE = r"""
                 document.getElementById('category-back-btn').style.display = 'none'; // Hide sub-back
                 document.getElementById('main-back-btn').style.display = 'inline-flex'; // Show main-back
                 
-                menuSection.querySelector('h2').innerHTML = '<i class="fa-solid fa-utensils text-red-600 mr-3"></i>МЕНЮ';
+                menuSection.querySelector('h2').innerHTML = 'МЕНЮ';
                 // Пинҳон кардани хӯрокҳо то он даме, ки зергурӯҳ интихоб шавад
                 productGrid.querySelectorAll('.product-card').forEach(c => c.style.display = 'none');
 
@@ -2583,6 +2828,18 @@ HTML_TEMPLATE = r"""
             document.getElementById('intro-section').style.display = 'none';
             document.getElementById('menu').style.display = 'none';
             document.getElementById('pizza-section').style.display = 'block';
+            const pizzaSection = document.getElementById('pizza-section');
+            const subCategories = document.getElementById('pizza-subcategories');
+            const productGrid = document.getElementById('pizza-filtered-product-grid');
+
+            pizzaSection.style.display = 'block';
+            subCategories.style.display = 'grid';
+            document.getElementById('pizza-category-back-btn').style.display = 'none';
+            document.getElementById('pizza-main-back-btn').style.display = 'inline-flex';
+
+            pizzaSection.querySelector('h2').innerHTML = 'ПИЦЦА';
+            productGrid.querySelectorAll('.product-card').forEach(c => c.style.display = 'none');
+
             if(typeof animateSection === 'function') animateSection('pizza-section');
             setTopControlsVisible(false);
             window.scrollTo(0, 0);
@@ -2590,11 +2847,39 @@ HTML_TEMPLATE = r"""
             document.body.scrollTop = 0;
             }, 350);
         }
+
+        function filterPizza(subCategory) {
+            const pizzaSection = document.getElementById('pizza-section');
+            const grid = document.getElementById('pizza-filtered-product-grid');
+            const title = pizzaSection.querySelector('h2');
+
+            setTimeout(() => {
+                document.getElementById('pizza-subcategories').style.display = 'none';
+                document.getElementById('pizza-main-back-btn').style.display = 'none';
+                document.getElementById('pizza-category-back-btn').style.display = 'inline-flex';
+                
+                title.innerHTML = subCategory.toUpperCase();
+
+                const cards = grid.querySelectorAll('.product-card');
+                cards.forEach(card => {
+                    const cardSub = card.getAttribute('data-subcategory') || '';
+                    card.style.display = (cardSub === subCategory) ? 'block' : 'none';
+                });
+
+                window.scrollTo(0, 0);
+                [title, grid].forEach(el => {
+                    el.classList.remove('page-transition');
+                    void el.offsetWidth; 
+                    el.classList.add('page-transition');
+                });
+            }, 250);
+        }
         function hidePizza() {
             setTimeout(() => {
             stopAllVideos();
             document.getElementById('pizza-section').style.display = 'none';
             document.getElementById('menu').style.display = 'block';
+            document.getElementById('pizza-subcategories').style.display = 'none';
             document.getElementById('intro-section').style.display = 'flex';
             animateSection('menu');
             animateSection('intro-section');
@@ -2961,6 +3246,14 @@ HTML_TEMPLATE = r"""
         let notificationsHistory = JSON.parse(localStorage.getItem("tfc_notifications_history") || "[]");
         let unreadNotifCount = parseInt(localStorage.getItem("tfc_unread_notif_count") || "0");
 
+        // Автоматикӣ тоза кардани хабарҳои аз 12 соат кӯҳна
+        const twelveHours = 12 * 60 * 60 * 1000;
+        const now = Date.now();
+        notificationsHistory = notificationsHistory.filter(n => !n.timestamp || (now - n.timestamp) < twelveHours);
+        localStorage.setItem("tfc_notifications_history", JSON.stringify(notificationsHistory));
+        unreadNotifCount = notificationsHistory.filter(n => n.isNew).length;
+        localStorage.setItem("tfc_unread_notif_count", unreadNotifCount);
+
         function updateNotifBadge() {
             const badge = document.getElementById('notif-count');
             if (badge) {
@@ -3087,14 +3380,21 @@ HTML_TEMPLATE = r"""
         }
 
         function clearNotifications() {
-            if (confirm("Вы действительно хотите очистить всю историю уведомлений?")) {
-                notificationsHistory = [];
-                localStorage.setItem("tfc_notifications_history", JSON.stringify(notificationsHistory));
-                unreadNotifCount = 0;
-                localStorage.setItem("tfc_unread_notif_count", "0");
-                updateNotifBadge();
-                renderNotificationsList();
-            }
+            document.getElementById('notif-clear-modal-overlay').classList.add('active');
+        }
+
+        function closeNotifClearModal() {
+            document.getElementById('notif-clear-modal-overlay').classList.remove('active');
+        }
+
+        function executeClearNotifications() {
+            notificationsHistory = [];
+            localStorage.setItem("tfc_notifications_history", JSON.stringify(notificationsHistory));
+            unreadNotifCount = 0;
+            localStorage.setItem("tfc_unread_notif_count", "0");
+            updateNotifBadge();
+            renderNotificationsList();
+            closeNotifClearModal();
         }
 
         function renderNotificationsList() {
@@ -3237,10 +3537,10 @@ HTML_TEMPLATE = r"""
                 return;
             }
 
-            let address = "";
-            if (orderData.delivery_type === 'delivery') {
-                address = sessionStorage.getItem('delivery_address_text') || "";
-            }
+            // Получаем адрес если это доставка
+            let address = sessionStorage.getItem('delivery_address') || '';
+            const lat = '';
+            const lng = '';
 
             fetch(adminApiBase() + "/api/orders/new", {
                 method: "POST",
@@ -3252,8 +3552,10 @@ HTML_TEMPLATE = r"""
                     price: orderData.price,
                     phone: orderData.phone,
                     delivery_type: orderData.delivery_type,
-                    delivery_latitude: "",
-                    delivery_longitude: "",
+                    tip: orderData.tip || "",
+                    payment_method: orderData.payment_method || "online",
+                    delivery_latitude: lat,
+                    delivery_longitude: lng,
                     delivery_address: address
                 }),
             })
@@ -3262,14 +3564,14 @@ HTML_TEMPLATE = r"""
                 })
                 .then(function (data) {
                     if (data && data.ok) {
-                        const msg = "Ваш заказ <b>отправлен</b>! ✅<br><span class='text-[12px]'>Оплатите через <b>Dushanbe City</b> на номер: <b class='text-red-500'>754169090</b>. <br><b>ВАЖНО:</b> Оплачивайте именно с того номера, который указали в заказе!</span>";
+                        const msg = "Ваш заказ <b>отправлен</b>! ✅";
                         latestCustomerStatus = data.order_id + "_pending";
                         localStorage.setItem("tfc_last_notified_status", latestCustomerStatus);
                         showLiveStatus(msg, false);
 
                         closeOrderModal();
                         // Очищаем адрес после использования
-                        sessionStorage.removeItem('delivery_address_text');
+                        sessionStorage.removeItem('delivery_address');
                     } else {
                         alert("Не удалось отправить заказ.");
                     }
@@ -3282,7 +3584,7 @@ HTML_TEMPLATE = r"""
 
         let cart = [];
         const subEmojiMap = {
-            'Паста': '🍝', 'Салаты': '🥗', 'Супы': '🥣', 'Горячие блюда': '🍖', 'Десерты': '🍰', 'Напитки': '🥤',
+            'Паста': '🍝', 'Салаты': '🥗', 'Супы': '🥣', 'Горячие блюда': '🍖', 'Десерты': '🍰', 'Напитки': '☕',
             'Хот-доги': '🌭', 'Бургеры': '🍔', 'Тортильи': '🌯', 'Сэндвичи': '🥪', 'Гарниры': '🍟',
             'Суши': '🍣', 'Роллы': '🍱', 'Смузи': '🍹', 'Мохито': '🍸', 'Холодок': '❄️'
         };
@@ -3445,6 +3747,17 @@ HTML_TEMPLATE = r"""
             }});
         }
 
+        function showPhoneOrderModal() {
+            const overlay = document.getElementById('phone-order-modal-overlay');
+            overlay.classList.add('active');
+        }
+
+        function closePhoneOrderModal() {
+            const overlay = document.getElementById('phone-order-modal-overlay');
+            overlay.classList.remove('active');
+        }
+
+
         async function confirmFullCartOrder(e) {
             if (cart.length === 0) return alert("Корзина пуста!");
             const phoneNode = document.getElementById("cart-customer-phone");
@@ -3454,17 +3767,24 @@ HTML_TEMPLATE = r"""
             if(btn) gsap.to(btn, { scale: 0.95, duration: 0.1, yoyo: true, repeat: 1 });
 
             if (!phone || phone.length < 5) return alert("Введите номер телефона!");
-
+            const phoneError = document.getElementById("cart-phone-error");
+            if (phone.length !== 9) {
+                phoneError.textContent = "Пожалуйста, введите 9 цифр.";
+                phoneError.classList.remove("hidden");
+                phoneNode.focus();
+                return;
+            } else { phoneError.classList.add("hidden"); }
             showWarningBeforeSubmit(() => {
-                showDeliverySelection(async (type) => {
+                showDeliverySelection(async (type, payPhone) => {
                     const total = cart.reduce((sum, item) => sum + (item.selectedPrice * item.qty), 0);
                     const foodList = cart.map((item, idx) => `${idx + 1}. ${item.food} [${item.selectedLabel}] x${item.qty}`).join(', ');
 
-                    cart = [];
-                    updateCartBadge();
-                    closeCartModal();
-                    
-                    submitOrderFromCard({ food: foodList, price: String(total), phone: phone, delivery_type: type });
+                    showPaymentInstruction(total, (paymentMethod) => {
+                        cart = [];
+                        updateCartBadge();
+                        closeCartModal();
+                        submitOrderFromCard({ food: foodList, price: String(total), phone: phone, delivery_type: type, payment_method: paymentMethod, payment_phone: payPhone });
+                    }, payPhone);
                 });
             });
         }
@@ -3518,15 +3838,23 @@ HTML_TEMPLATE = r"""
             const total = selectedOrderPayload.selectedPrice * qty;
             const orderFood = selectedOrderPayload.food + " [" + selectedOrderPayload.selectedLabel + "] x" + qty;
             const orderPrice = String(total);
+
             const phone = phoneNode.value.trim();
-            
-            if (!phone || phone.length < 5) { alert("Введите номер телефона!"); return; }
+            const phoneError = document.getElementById("modal-phone-error");
+            if (phone.length !== 9) {
+                phoneError.textContent = "Пожалуйста, введите 9 цифр.";
+                phoneError.classList.remove("hidden");
+                phoneNode.focus();
+                return;
+            } else { phoneError.classList.add("hidden"); }
 
             // Пеш аз фиристодан, огоҳиномаро нишон медиҳем
             setTimeout(() => {
                 showWarningBeforeSubmit(() => {
-                    showDeliverySelection((type) => {
-                        submitOrderFromCard({ food: orderFood, price: orderPrice, phone: phone, delivery_type: type });
+                    showDeliverySelection((type, payPhone) => {
+                        showPaymentInstruction(total, (paymentMethod) => {
+                            submitOrderFromCard({ food: orderFood, price: orderPrice, phone: phone, delivery_type: type, payment_method: paymentMethod, payment_phone: payPhone });
+                        }, payPhone);
                     });
                 });
             }, 200);
@@ -3541,7 +3869,7 @@ HTML_TEMPLATE = r"""
                         <i class="fa-solid fa-circle-exclamation"></i>
                     </div>
                     <h2 class="text-xl font-black text-white mb-2">ВНИМАНИЕ!</h2>
-                    <p class="text-white/60 text-sm mb-6 leading-relaxed">Пожалуйста, <b>не выходите из сайта</b> до тех пор, пока ваше блюдо не будет готово!</p>
+                    <p class="text-white/60 text-sm mb-6 leading-relaxed">Пожалуйста, <b>не выходите из приложения</b> до тех пор, пока ваш заказ не будет готов!</p>
                     <button id="btn-ponyaltu" class="w-full py-4 bg-yellow-400 text-black font-black rounded-2xl active:scale-95 transition shadow-lg shadow-yellow-400/20">ПОНЯЛ</button>
                 </div>
             `;
@@ -3554,56 +3882,153 @@ HTML_TEMPLATE = r"""
             };
         }
 
-        function showDeliverySelection(onSelect) {
+        function showPaymentInstruction(totalAmount, onComplete, paymentPhoneNumber) {
+            const overlay = document.createElement('div');
+            overlay.className = "fixed inset-0 z-[12001] bg-black/90 backdrop-blur-xl flex items-center justify-center p-6";
+            const adminNumber = paymentPhoneNumber || "754169090"; 
+            const profile = getOrCreateCustomerProfile();
+            const customerId = (profile && profile.id) ? profile.id : '';
+            overlay.innerHTML = `
+                <div class="bg-zinc-900 border border-white/10 p-8 rounded-[32px] max-w-sm w-full text-center shadow-2xl animate-in zoom-in duration-300">
+                    <div class="w-20 h-20 bg-yellow-400/20 text-yellow-400 rounded-full flex items-center justify-center mx-auto mb-6 text-4xl shadow-[0_0_30px_rgba(255,215,0,0.2)]">
+                        <i class="fa-solid fa-wallet"></i>
+                    </div>
+                    <h2 class="text-2xl font-black text-white mb-2 uppercase tracking-tight">Оплата</h2>
+                    <p class="text-white/60 text-xs mb-6 leading-relaxed">Скопируйте номер и оплатите <b class="text-yellow-400 text-lg">${totalAmount}</b> сомони. <br><b class="text-red-500">НЕ ЗАКРЫВАЙТЕ ПРИЛОЖЕНИЕ!</b></p>
+                    
+                    <div class="bg-white/5 border border-white/10 p-5 rounded-2xl flex items-center justify-between mb-8 group active:bg-white/10 transition-all">
+                        <span class="text-2xl font-black text-white tracking-widest">${adminNumber}</span>
+                        <button onclick="copyAdminNumber('${adminNumber}', this)" class="w-12 h-12 bg-yellow-400 text-black rounded-xl flex items-center justify-center transition-all active:scale-90" title="Копировать номер">
+                            <i class="fa-solid fa-copy"></i>
+                        </button>
+                    </div>
+
+                    <div class="flex flex-col gap-3">
+                        <button id="btn-payment-confirmed" disabled class="w-full py-4 bg-black/50 text-white/40 font-black rounded-2xl transition uppercase tracking-widest text-xs cursor-not-allowed">
+                            Я оплатил(а) (Картой)
+                        </button>
+                        <button id="btn-pay-cash" class="w-full py-4 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-black rounded-2xl active:scale-95 transition shadow-lg shadow-emerald-500/20 uppercase tracking-widest text-xs flex items-center justify-center gap-2">
+                            <i class="fas fa-money-bill-wave"></i> НАЛИЧНЫМИ
+                        </button>
+                    </div>
+                </div>
+            `;
+            document.body.appendChild(overlay);
+
+            const confirmBtn = document.getElementById('btn-payment-confirmed');
+            const cashBtn = document.getElementById('btn-pay-cash');
+            const unlockButton = () => {
+                confirmBtn.disabled = false;
+                confirmBtn.className = "w-full py-4 bg-green-600 text-white font-black rounded-2xl active:scale-95 transition shadow-lg shadow-green-500/20 uppercase tracking-widest text-xs";
+                window.removeEventListener('focus', unlockButton);
+            };
+
+            // Тугма вақте фаъол мешавад, ки муштарӣ аз дигар барнома ба браузер бармегардад
+            window.addEventListener('focus', unlockButton);
+
+            window.copyAdminNumber = (text, btn) => {
+                navigator.clipboard.writeText(text).then(() => {
+                    const icon = btn.querySelector('i');
+                    icon.className = 'fa-solid fa-check';
+                    setTimeout(() => icon.className = 'fa-solid fa-copy', 2000);
+                });
+            };
+
+            cashBtn.onclick = () => {
+                overlay.remove();
+                onComplete("cash");
+                window.removeEventListener('focus', unlockButton);
+            };
+
+            confirmBtn.onclick = () => {
+                if (confirmBtn.disabled) return;
+                overlay.remove();
+                onComplete("online");
+                window.removeEventListener('focus', unlockButton);
+            };
+        }
+
+        function showDeliverySelection(onSelect) { // onSelect(type, phone)
             const overlay = document.createElement('div');
             overlay.className = "fixed inset-0 z-[12000] bg-black/80 backdrop-blur-md flex items-center justify-center p-6";
             overlay.innerHTML = `
-                <div class="bg-zinc-900 border border-white/10 p-8 rounded-[32px] max-w-sm w-full text-center shadow-2xl animate-in zoom-in duration-300">
+                <div class="bg-zinc-900 border border-white/10 p-8 rounded-[32px] max-w-sm w-full text-center shadow-2xl animate-in zoom-in duration-300 overflow-y-auto max-h-[90vh]">
+                    <div id="delivery-step-1">
                     <h2 class="text-xl font-black text-white mb-2">КАК ВАМ УДОБНО?</h2>
                     <p class="text-white/60 text-sm mb-6 leading-relaxed">Пожалуйста, выберите способ получения заказа:</p>
                     <div class="grid grid-cols-1 gap-3">
                         <button id="btn-delivery" class="w-full py-4 bg-red-600 text-white font-black rounded-2xl active:scale-95 transition flex items-center justify-center gap-3"><i class="fas fa-truck"></i> ДОСТАВКА</button>
                         <button id="btn-pickup" class="w-full py-4 bg-white/10 text-white font-black rounded-2xl active:scale-95 transition border border-white/10 flex items-center justify-center gap-3"><i class="fas fa-walking"></i> САМОВЫВОЗ</button>
                     </div>
+                    </div>
+                    <div id="delivery-step-2" class="hidden">
+                        <div class="w-16 h-16 bg-red-600/20 text-red-600 rounded-full flex items-center justify-center mx-auto mb-4 text-3xl">
+                            <i class="fa-solid fa-map-location-dot"></i>
+                        </div>
+                        <h2 class="text-xl font-black text-white mb-2 uppercase">КУДА ДОСТАВИТЬ?</h2>
+                        <p class="text-white/60 text-sm mb-6 leading-relaxed">Пожалуйста, напишите ваш точный адрес:</p>
+                        <textarea id="delivery-address-input" name="cust_addr_no_fill" rows="2" placeholder="Напишите здесь..."
+                                  autocomplete="new-password" autocorrect="off" autocapitalize="off" spellcheck="false"
+                                  class="w-full px-4 py-3 rounded-xl border border-white/10 bg-black/20 text-white focus:ring-2 focus:ring-yellow-400 outline-none transition font-bold mb-4"></textarea>
+                        <button id="btn-confirm-address" class="w-full py-4 bg-blue-600 text-white font-black rounded-2xl active:scale-95 transition flex items-center justify-center gap-3 shadow-lg shadow-blue-500/20">
+                            <i class="fas fa-check"></i> ПОДТВЕРДИТЬ АДРЕС
+                        </button>
+                    </div>
                 </div>
             `;
             document.body.appendChild(overlay);
+            
             document.getElementById('btn-delivery').onclick = () => { 
-                overlay.remove();
-                showAddressInput(onSelect);
-            };
-            document.getElementById('btn-pickup').onclick = () => { 
-                setTimeout(() => {
-                    overlay.remove(); 
-                    onSelect('pickup'); 
-                }, 200);
-            };
-        }
+                document.getElementById('delivery-step-1').classList.add('hidden');
+                document.getElementById('delivery-step-2').classList.remove('hidden');
+                const addressInput = document.getElementById('delivery-address-input');
 
-        function showAddressInput(onSelect) {
-            const overlay = document.createElement('div');
-            overlay.className = "fixed inset-0 z-[12000] bg-black/80 backdrop-blur-md flex items-center justify-center p-6";
-            overlay.innerHTML = `
-                <div class="bg-zinc-900 border border-white/10 p-8 rounded-[32px] max-w-sm w-full text-center shadow-2xl animate-in zoom-in duration-300">
-                    <h2 class="text-xl font-black text-white mb-2">ВАШ АДРЕС</h2>
-                    <p class="text-white/60 text-sm mb-4">Напишите, куда привезти заказ (улица, дом, ориентир):</p>
-                    <textarea id="delivery-address-input" class="w-full px-4 py-3 rounded-xl border border-white/10 bg-white/5 text-white mb-4 focus:ring-2 focus:ring-yellow-400 outline-none h-24" placeholder="Напр: 10 мкр, дом 5. Возле парка Сафар Амиршоев"></textarea>
-                    <button id="btn-confirm-address" class="w-full py-4 bg-yellow-400 text-black font-black rounded-2xl active:scale-95 transition shadow-lg">ПОДТВЕРДИТЬ</button>
-                </div>
-            `;
-            document.body.appendChild(overlay);
+                // Вақте ки клавиатура пайдо мешавад, равзанаро ба боло мебарем
+                addressInput.onfocus = () => {
+                    overlay.classList.replace('items-center', 'items-start');
+                    overlay.classList.add('pt-10');
+                };
+                addressInput.onblur = () => {
+                    overlay.classList.replace('items-start', 'items-center');
+                    overlay.classList.remove('pt-10');
+                };
+                addressInput.focus();
+            };
             document.getElementById('btn-confirm-address').onclick = () => {
-                const addr = document.getElementById('delivery-address-input').value.trim();
-                if(!addr) return alert("Пожалуйста, введите адрес доставки!");
-                overlay.remove();
-                sessionStorage.setItem('delivery_address_text', addr);
-                onSelect('delivery');
+                const address = document.getElementById('delivery-address-input').value.trim();
+                if (address.length < 5) return alert("Пожалуйста, введите полный адрес!");
+                sessionStorage.setItem('delivery_address', address);
+                
+                // Гирифтани рақами навбатӣ барои Доставка
+                fetch('/api/get-next-payment-phone')
+                    .then(r => r.json())
+                    .then(data => {
+                        overlay.remove(); 
+                        onSelect('delivery', data.phone);
+                    });
+            };
+
+            document.getElementById('btn-pickup').onclick = () => { 
+                // Гирифтани рақами навбатӣ барои Самовывоз (Гардиш)
+                fetch('/api/get-next-payment-phone')
+                    .then(r => r.json())
+                    .then(data => {
+                        overlay.remove(); 
+                        onSelect('pickup', data.phone);
+                    });
             };
         }
 
         function showLiveStatus(message, isOk) {
             // Илова ба таърихи хабарҳо
             notificationsHistory.push({ message, isOk, time: new Date().toLocaleTimeString('ru-RU'), isNew: true });
+            notificationsHistory.push({ 
+                message, 
+                isOk, 
+                time: new Date().toLocaleTimeString('ru-RU'), 
+                timestamp: Date.now(), 
+                isNew: true 
+            });
             // Захира кардан дар localStorage
             localStorage.setItem("tfc_notifications_history", JSON.stringify(notificationsHistory));
             
@@ -3664,57 +4089,54 @@ HTML_TEMPLATE = r"""
                 if (!data || !data.ok || !Array.isArray(data.orders) || data.orders.length === 0) return;
                 const last = data.orders[data.orders.length - 1];
                 
-                const priceNum = parseFloat(String(last.price).replace(/[^0-9.]/g, '')) || 0;
-                const isFullyOOS = last.out_of_stock && (last.refund >= priceNum && priceNum > 0);
-
                 let statusType = "pending";
+                let deliveryMsg = last.delivery_type === 'delivery' ? 'Доставка' : 'Самовывоз';
+                let statusText = "Ваш заказ <b>отправлен</b>! ✅";
                 let ok = false;
-                let statusText = "";
 
-                if (isFullyOOS) {
-                    const missingItems = []; const regex = /<s>(.*?)<\/s>/g; let match;
+                let oosPart = "";
+                // Тафтиш: Оё ҳамаи хӯрокҳо хат зада шудаанд?
+                const cleanPrice = parseFloat(String(last.price || 0).replace(',', '.').replace(/[^0-9.]/g, ''));
+                if (last.out_of_stock && parseFloat(last.refund) >= cleanPrice && cleanPrice > 0) {
+                    statusType = "cancelled_oos";
+                    statusText = `К сожалению, нет никаких блюд и мы вернем ваши деньги: ${last.refund} смн. ❌`;
+                } else if (last.out_of_stock) {
+                    const missingItems = [];
+                    const regex = /<s>(.*?)<\/s>/g;
+                    let match;
                     while ((match = regex.exec(last.food)) !== null) {
                         missingItems.push(match[1]);
                     }
-                    statusText = `<span class="text-red-500 font-bold">Извините, блюд "${missingItems.join(", ")}" нет в наличии, и мы вернем вам ваши деньги. ❌</span>`;
-                    statusType = "fully_oos";
-                } else {
-                    let deliveryMsg = last.delivery_type === 'delivery' ? 'Доставка' : 'Самовывоз';
-                    statusText = "Ваш заказ <b>отправлен</b>! ✅<br><span class='text-[10px] opacity-70 italic'>Тип: " + deliveryMsg + " | Тел: " + (last.phone || "") + "</span><br><span class='text-[10px] opacity-70'>Пожалуйста, не выходите из сайта до готовности блюда.</span>";
+                    if (missingItems.length > 0) {
+                        const refundTxt = last.refund > 0 ? ` Из-за того, что у нас нет такого блюда, мы вернем вам ваши деньги: ${last.refund} сомони.` : "";
+                        oosPart = `<br><span class="text-red-500 font-bold">Извините, "${missingItems.join(", ")}" нет в наличии.${refundTxt} ❌</span>`;
+                    }
+                }
 
-                    let oosPart = "";
-                    if (last.out_of_stock) {
-                        const missingItems = [];
-                        const regex = /<s>(.*?)<\/s>/g;
-                        let match;
-                        while ((match = regex.exec(last.food)) !== null) {
-                            missingItems.push(match[1]);
-                        }
-                        if (missingItems.length > 0) {
-                            oosPart = `<br><span class="text-red-500 font-bold">Извините, блюд "${missingItems.join(", ")}" нет в наличии, и мы вернем вам ваши деньги. ❌</span>`;
-                        }
+                if (statusText.includes("К сожалению")) {
+                    // Матни махсус аллакай таъин шудааст
+                } else if (last.dostavka === 1) {
+                    statusText = "Мы везем ваш заказ! 🚀🚗";
+                    statusType = "shipping";
+                } else if (last.dostavka === 2) {
+                    statusText = "Ваш заказ доставлен! Приятного аппетита! 🏠✅";
+                    statusType = "ready"; ok = true;
+                } else if (last.omoda) {
+                    statusText = last.delivery_type === 'pickup' ? "Ваш заказ готов! Пожалуйста, заберите свое блюдо." : "Ваш заказ готов! Через несколько минут мы его доставим. 🚀";
+                    statusType = "ready"; ok = true;
+                } else if (last.qabyl) {
+                    let timeMsg = "";
+                    if (last.estimated_time) {
+                        timeMsg = last.delivery_type === 'delivery' ? 
+                            `<br><b>Ваш заказ будет готов и прислан через ${last.estimated_time} минут.</b>` : 
+                            `<br><b>Ваш заказ будет готов примерно через ${last.estimated_time} минут.</b>`;
                     }
+                    statusText = `Заказ <b>принят</b> поваром! 👨‍🍳${timeMsg}`;
+                    statusType = "accepted";
+                }
 
-                    if (last.dostavka === 1) {
-                        statusText = "Мы везем ваш заказ! 🚀🚗";
-                        statusType = "shipping";
-                    } else if (last.dostavka === 2) {
-                        statusText = "Ваш заказ доставлен! Приятного аппетита! 🏠✅";
-                        statusType = "ready"; ok = true;
-                    } else if (last.omoda) {
-                        statusText = last.delivery_type === 'pickup' ? "Ваш заказ готов! Пожалуйста, заберите свое блюдо." : "Ваш заказ <b>готов</b>! Приятного аппетита! 🍗🎉";
-                        statusType = "ready"; ok = true;
-                    } else if (last.qabyl) {
-                        // Гирифтани вақт аз маълумоти заказ
-                        const pTime = last.prep_time || "15 минут";
-                        statusText = `Заказ <b>принят</b> поваром! 👨‍🍳<br><span class='text-[10px] opacity-90'>Ваши блюда будут готовы через <b>${pTime}</b>. Ваш заказ готовится.</span>`;
-                        statusType = "accepted";
-                    }
-                    
-                    // Паёми сурхро (oosPart) танҳо дар марҳилаҳои аввал нишон медиҳем
-                    if (statusType === "pending" || statusType === "accepted") {
-                        statusText += oosPart;
-                    }
+                if (statusType === "pending" || statusType === "accepted") {
+                    statusText += oosPart;
                 }
 
                 // Сохтани калиди беназир: ID-и заказ + статус
@@ -3776,6 +4198,12 @@ HTML_TEMPLATE = r"""
         document.getElementById("cart-modal-overlay").addEventListener("click", function (e) {
             if (e.target.id === "cart-modal-overlay") closeCartModal();
         });
+        document.getElementById("notif-clear-modal-overlay").addEventListener("click", function (e) {
+            if (e.target.id === "notif-clear-modal-overlay") closeNotifClearModal();
+        });
+        document.getElementById("phone-order-modal-overlay").addEventListener("click", function (e) {
+            if (e.target.id === "phone-order-modal-overlay") closePhoneOrderModal();
+        });
 
         function startCustomerStatusPolling() {
             if (statusPollTimer) clearInterval(statusPollTimer);
@@ -3824,162 +4252,6 @@ HTML_TEMPLATE = r"""
             }
         }
 
-        // PWA Installation Logic
-        let deferredPrompt;
-        window.addEventListener('beforeinstallprompt', (e) => {
-            // Пешгирӣ аз нишон додани баннери автоматии браузер
-            e.preventDefault();
-            // Захира кардани рӯйдод барои истифодаи баъдӣ
-            deferredPrompt = e;
-            // Намоиш додани баннери мо пас аз 3 сонияи ворид шудан
-            setTimeout(showInstallBanner, 2000); 
-        });
-
-        function showInstallBanner() {
-            if (deferredPrompt) {
-                document.getElementById('pwa-install-banner').classList.add('show');
-            }
-        }
-
-        function hideInstallBanner() {
-            document.getElementById('pwa-install-banner').classList.remove('show');
-        }
-
-        async function installTFC() {
-            if (!deferredPrompt) return;
-            deferredPrompt.prompt(); // Нишон додани равзанаи насб
-            const { outcome } = await deferredPrompt.userChoice;
-            console.log(`User response to install: ${outcome}`);
-            if (outcome === 'accepted') {
-                showLiveStatus("Приложение TFC установлено на ваш телефон! ✅", true);
-            }
-            deferredPrompt = null;
-            hideInstallBanner();
-        }
-
-        // Ин ҳодиса вақте кор мекунад, ки барнома пурра дар телефон насб шавад
-        window.addEventListener('appinstalled', (event) => {
-            showLiveStatus("Приложение TFC установлено на ваш телефон! ✅", true);
-            deferredPrompt = null;
-            hideInstallBanner();
-        });
-
-        // --- 3D CINEMATIC LOGO (THREE.JS) ---
-        let scene, camera, renderer, composer, meshT, meshF, meshC, textMesh, sceneTl;
-
-        function init3D() {
-            const container = document.getElementById('canvas-container');
-            if(!container) return;
-            
-            scene = new THREE.Scene();
-            scene.background = new THREE.Color(0x020202);
-            // Заминаро шаффоф мемонем, то градиенти сурхи CSS намоён шавад
-            camera = new THREE.PerspectiveCamera(40, window.innerWidth / window.innerHeight, 0.1, 100);
-            camera.position.set(0, 0, 12);
-
-            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-            renderer.setSize(container.clientWidth, container.clientHeight);
-            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-            renderer.toneMapping = THREE.ACESFilmicToneMapping;
-            container.appendChild(renderer.domElement);
-
-            const renderPass = new THREE.RenderPass(scene, camera);
-            const bloomPass = new THREE.UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 1.4, 0.6, 0.15);
-            composer = new THREE.EffectComposer(renderer);
-            composer.addPass(renderPass); composer.addPass(bloomPass);
-
-            scene.add(new THREE.AmbientLight(0xffffff, 0.3));
-            const sun = new THREE.DirectionalLight(0xffffff, 1); sun.position.set(5, 10, 8); scene.add(sun);
-
-            const tfcMat = new THREE.MeshPhysicalMaterial({ color: 0xffd700, metalness: 0.9, roughness: 0.1, clearcoat: 1.0 });
-            const extrudeSettings = { depth: 0.4, bevelEnabled: true, bevelThickness: 0.1, bevelSize: 0.1 };
-
-            // T, F, C shapes logic from safchk.py
-            const sT = new THREE.Shape(); sT.moveTo(-2.2, 1.5); sT.lineTo(-0.8, 1.5); sT.lineTo(-0.8, -1.5); sT.lineTo(-1.3, -1.5); sT.lineTo(-1.3, 1.0); sT.lineTo(-2.2, 1.0);
-            meshT = new THREE.Mesh(new THREE.ExtrudeGeometry(sT, extrudeSettings), tfcMat);
-            
-            const sF = new THREE.Shape(); sF.moveTo(-0.4, 1.5); sF.lineTo(1.0, 1.5); sF.lineTo(1.0, 1.1); sF.lineTo(0.1, 1.1); sF.lineTo(0.1, 0.3); sF.lineTo(0.8, 0.3); sF.lineTo(0.8, -0.1); sF.lineTo(0.1, -0.1); sF.lineTo(0.1, -1.5); sF.lineTo(-0.4, -1.5);
-            meshF = new THREE.Mesh(new THREE.ExtrudeGeometry(sF, extrudeSettings), tfcMat);
-
-            const sC = new THREE.Shape(); sC.absarc(2.2, 0, 1.5, Math.PI * 0.2, Math.PI * 1.8, false); sC.lineTo(2.0, -1.2); sC.absarc(2.2, 0, 1.1, Math.PI * 1.8, Math.PI * 0.2, true);
-            meshC = new THREE.Mesh(new THREE.ExtrudeGeometry(sC, extrudeSettings), tfcMat);
-
-            scene.add(meshT, meshF, meshC);
-
-            const loader = new THREE.FontLoader();
-            loader.load('https://unpkg.com/three@0.128.0/examples/fonts/helvetiker_bold.typeface.json', (font) => {
-                const textGeo = new THREE.TextGeometry('Tajik Fried Fish & Chicken', { font: font, size: 0.2, height: 0.05, bevelEnabled: true, bevelThickness: 0.01, bevelSize: 0.01 });
-                textGeo.computeBoundingBox();
-                const center = -0.5 * (textGeo.boundingBox.max.x - textGeo.boundingBox.min.x);
-                textMesh = new THREE.Mesh(textGeo, new THREE.MeshPhysicalMaterial({ color: 0xffd700, metalness: 0.8, roughness: 0.2 }));
-                textMesh.position.set(center, -2.4, 0);
-                scene.add(textMesh);
-                run3DAnimation();
-            });
-
-            animate3D();
-        }
-
-        function run3DAnimation() {
-            if (sceneTl) sceneTl.kill();
-            sceneTl = gsap.timeline();
-            gsap.set([meshT.position, meshF.position, meshC.position], { z: -10, y: 5 });
-            gsap.set([meshT.rotation, meshF.rotation, meshC.rotation], { x: 2, y: 2 });
-            if(textMesh) gsap.set(textMesh.material, { opacity: 0 });
-
-            sceneTl.to(meshT.position, { y: 0, z: 0, duration: 1.5, ease: "expo.out" }, 0)
-                   .to(meshT.rotation, { x: 0, y: 0, duration: 2, ease: "power4.out" }, 0);
-            sceneTl.to(meshF.position, { y: 0, z: 0, duration: 1.5, ease: "expo.out" }, 0.2)
-                   .to(meshF.rotation, { x: 0, y: 0, duration: 2, ease: "power4.out" }, 0.2);
-            sceneTl.to(meshC.position, { y: 0, z: 0, duration: 1.5, ease: "expo.out" }, 0.4)
-                   .to(meshC.rotation, { x: 0, y: 0, duration: 2, ease: "power4.out" }, 0.4);
-            
-            if(textMesh) {
-                sceneTl.to(textMesh.material, { opacity: 1, duration: 1 }, 1.5);
-                sceneTl.from(textMesh.position, { y: -3.5, duration: 1.2, ease: "back.out(1.7)" }, 1.5);
-            }
-            // Пинҳон кардани матни HTML, вақте ки 3D омода мешавад
-            const htmlTitle = document.querySelector('#intro-section .tfc-main-title');
-            if(htmlTitle) {
-                gsap.to(htmlTitle, { opacity: 0, duration: 0.5 });
-            }
-        }
-
-        function animate3D() {
-            requestAnimationFrame(animate3D);
-            const time = Date.now() * 0.001;
-            if (meshT) {
-                meshT.position.y = Math.sin(time * 0.5) * 0.08;
-                meshF.position.y = Math.sin(time * 0.5 + 0.5) * 0.08;
-                meshC.position.y = Math.sin(time * 0.5 + 1.0) * 0.08;
-            }
-            composer.render();
-        }
-
-        window.addEventListener('resize', () => {
-            const container = document.getElementById('canvas-container');
-            if(!container || !camera) return;
-            camera.aspect = container.clientWidth / container.clientHeight;
-            camera.updateProjectionMatrix();
-            renderer.setSize(container.clientWidth, container.clientHeight);
-            composer.setSize(container.clientWidth, container.clientHeight);
-        });
-
-        // Пайваст кардани Fullscreen ба тамоми экран ва экрани боркунӣ
-        document.addEventListener('click', triggerFullScreen);
-        document.addEventListener('touchstart', triggerFullScreen);
-        document.getElementById('loading-screen').addEventListener('click', triggerFullScreen);
-        document.getElementById('auth-section').addEventListener('click', triggerFullScreen); // Барои ҳолати логин
-
-        // Ибтидои 3D ба ҷои аниматсияи кӯҳна
-        const originalShowApp = showApp;
-        showApp = function() {
-            originalShowApp();
-            setTimeout(init3D, 200);
-            updateNotifBadge(); // Навсозии баҷ ҳангоми ворид шудан
-        };
-        
-        document.getElementById('replay-btn').addEventListener('click', run3DAnimation);
     </script>
 </body>
 </html>
@@ -4037,6 +4309,26 @@ def api_push_subscribe():
     conn.commit(); conn.close()
     return jsonify({"ok": True})
 
+@app.route("/api/customers/register", methods=["POST"])
+def api_customers_register():
+    data = request.get_json() or {}
+    full_name = data.get("full_name")
+    customer_id = data.get("customer_id")
+    if not full_name or not customer_id:
+        return jsonify({"ok": False, "error": "missing_data"}), 400
+    
+    created = datetime.now().strftime("%d.%m.%Y %H:%M")
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cur = conn.cursor()
+        cur.execute("INSERT OR IGNORE INTO customers (full_name, customer_id, created) VALUES (?, ?, ?)", 
+                    (full_name, customer_id, created))
+        conn.commit()
+        conn.close()
+        return jsonify({"ok": True})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
 @app.route("/api/auth/send-code", methods=["POST"])
 def api_send_code():
     data = request.get_json() or {}
@@ -4079,7 +4371,6 @@ def api_verify_code():
     return jsonify({"ok": False, "error": "wrong_code"})
 
 # API Routes (Moved from bilol.py to app.py)
-@app.route("/api/orders/new", methods=["POST"])
 @app.route("/api/orders/new", methods=["POST", "OPTIONS"])
 def api_orders_new():
     if request.method == "OPTIONS":
@@ -4092,51 +4383,72 @@ def api_orders_new():
     price = data.get("price", "0")
     phone = data.get("phone", "")
     delivery_type = data.get("delivery_type", "pickup")
+    tip = data.get("tip", "")
     delivery_latitude = data.get("delivery_latitude", "")
     delivery_longitude = data.get("delivery_longitude", "")
     delivery_address = data.get("delivery_address", "")
+    payment_method = data.get("payment_method", "online")
+    payment_phone = data.get("payment_phone", "")
+
+    if not tip:
+        tip = "Наличными 💵" if payment_method == "cash" else f"Картой 💳 ({payment_phone})"
     created = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     conn = sqlite3.connect(DB_PATH, timeout=20)
-    cur = conn.cursor()
+    cur = conn.cursor() # Ensure timeout is applied here
     # Insert bo hamai maydonho baroi durust namoyish shudan dar admin
     cur.execute("""
-        INSERT INTO orders (customer, customer_id, food, price, phone, delivery_type, delivery_latitude, delivery_longitude, delivery_address, qabyl, omoda, dostavka, created)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 0, ?)
-    """, (customer, customer_id, food, price, phone, delivery_type, delivery_latitude, delivery_longitude, delivery_address, created))
+        INSERT INTO orders (customer, customer_id, food, price, phone, delivery_type, tip, delivery_latitude, delivery_longitude, delivery_address, payment_method, qabyl, omoda, dostavka, created)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 0, ?)
+    """, (customer, customer_id, food, price, phone, delivery_type, tip, delivery_latitude, delivery_longitude, delivery_address, payment_method, created))
     order_id = cur.lastrowid
     
     # Сабти заказ дар таърихи доимӣ (Архив), то пас аз нест кардан боқӣ монад
     cur.execute(
-        "INSERT INTO full_order_history (customer, customer_id, food, price, phone, delivery_type, created) VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (customer, customer_id, food, price, phone, delivery_type, created)
+        "INSERT INTO full_order_history (customer, customer_id, food, price, phone, delivery_type, tip, payment_method, created) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (customer, customer_id, food, price, phone, delivery_type, tip, payment_method, created)
     )
 
     # Сабти маблағ дар таърихи доимӣ
     try:
         p_clean = "".join(c for c in str(price).replace(',', '.') if c.isdigit() or c == '.')
         amount = float(p_clean) if p_clean else 0.0
-        cur.execute("INSERT INTO revenue_history (amount, day) VALUES (?, ?)", (amount, datetime.now().strftime("%Y-%m-%d")))
+        cur.execute("INSERT INTO revenue_history (amount, day, customer_id) VALUES (?, ?, ?)", (amount, datetime.now().strftime("%Y-%m-%d"), customer_id))
     except: pass
 
     conn.commit()
     conn.close()
     return jsonify({"ok": True, "order_id": order_id})
 
+@app.route("/api/get-next-payment-phone")
+def api_get_next_phone():
+    phone = get_next_payment_phone_for_rotation()
+    return jsonify({"ok": True, "phone": phone})
+
 @app.route("/api/orders/since", methods=["GET"])
 def api_orders_since():
-    last_id = int(request.args.get("last_id", 0))
-    conn = sqlite3.connect(DB_PATH); cur = conn.cursor()
-    cur.execute("SELECT id, customer, customer_id, food, price, qabyl, omoda, created, phone, delivery_type, delivery_latitude, delivery_longitude, delivery_address FROM orders WHERE id > ?", (last_id,))
-    rows = cur.fetchall(); conn.close()
-    return jsonify({"ok": True, "orders": [{"id": r[0], "customer": r[1], "customer_id": r[2], "food": r[3], "price": r[4], "qabyl": bool(r[5]), "omoda": bool(r[6]), "created": r[7], "phone": r[8], "delivery_type": r[9], "delivery_latitude": r[10] if len(r) > 10 else "", "delivery_longitude": r[11] if len(r) > 11 else "", "delivery_address": r[12] if len(r) > 12 else ""} for r in rows]})
+    try:
+        last_id = int(request.args.get("last_id", 0))
+        conn = sqlite3.connect(DB_PATH, timeout=20); cur = conn.cursor()
+        cur.execute("SELECT id, customer, customer_id, food, price, qabyl, omoda, created, phone, delivery_type, delivery_latitude, delivery_longitude, delivery_address, estimated_time, tip FROM orders WHERE id > ?", (last_id,))
+        rows = cur.fetchall(); conn.close()
+        return jsonify({"ok": True, "orders": [{"id": r[0], "customer": r[1], "customer_id": r[2], "food": r[3], "price": r[4], "qabyl": bool(r[5]), "omoda": bool(r[6]), "created": r[7], "phone": r[8], "delivery_type": r[9], "delivery_latitude": r[10] if len(r) > 10 else "", "delivery_longitude": r[11] if len(r) > 11 else "", "delivery_address": r[12] if len(r) > 12 else "", "estimated_time": r[13], "tip": r[14] if len(r) > 14 else ""} for r in rows]})
+    except ValueError:
+        return jsonify({"ok": False, "error": "Invalid last_id parameter"}), 400
+    except sqlite3.Error as e:
+        print(f"Database error in api_orders_since: {e}")
+        return jsonify({"ok": False, "error": "Database error"}), 500
 
 @app.route("/api/orders/update-status", methods=["POST"])
 def api_orders_update_status():
     data = request.get_json() or {}
     order_id, field = data.get("id"), data.get("field")
     db_value = int(data.get("value", 0))
+    estimated_time = data.get("estimated_time")
     conn = sqlite3.connect(DB_PATH); cur = conn.cursor()
-    cur.execute(f"UPDATE orders SET {field} = ? WHERE id = ?", (db_value, order_id))
+    if field == 'qabyl' and estimated_time is not None:
+        cur.execute(f"UPDATE orders SET {field} = ?, estimated_time = ? WHERE id = ?", (db_value, estimated_time, order_id))
+    else:
+        cur.execute(f"UPDATE orders SET {field} = ? WHERE id = ?", (db_value, order_id))
     conn.commit(); conn.close()
 
     # Push Notification Logic
@@ -4148,16 +4460,15 @@ def api_orders_update_status():
 @app.route("/api/orders/customer-status", methods=["GET"])
 def api_orders_customer_status():
     customer_id = request.args.get("customer_id", "")
-    conn = sqlite3.connect(DB_PATH); cur = conn.cursor()
-    cur.execute("SELECT id, food, qabyl, omoda, phone, delivery_type, dostavka, out_of_stock, refund, price FROM orders WHERE customer_id = ? ORDER BY id DESC LIMIT 1", (customer_id,))
-    r = cur.fetchone()
-    # Гирифтани вақти танзимшуда
-    cur.execute("SELECT val FROM settings WHERE key='prep_time'")
-    p_time_row = cur.fetchone()
-    p_time = p_time_row[0] if p_time_row else "15 минут"
-    conn.close()
-    orders = [{"id": r[0], "food": r[1], "qabyl": bool(r[2]), "omoda": bool(r[3]), "phone": r[4], "delivery_type": r[5], "dostavka": int(r[6]), "out_of_stock": bool(r[7]), "refund": r[8], "price": r[9], "prep_time": p_time}] if r else []
-    return jsonify({"ok": True, "orders": orders})
+    try:
+        conn = sqlite3.connect(DB_PATH); cur = conn.cursor()
+        cur.execute("SELECT id, food, qabyl, omoda, phone, delivery_type, dostavka, out_of_stock, refund, estimated_time, price FROM orders WHERE customer_id = ? ORDER BY id DESC LIMIT 1", (customer_id,))
+        r = cur.fetchone(); conn.close()
+        orders = [{"id": r[0], "food": r[1], "qabyl": bool(r[2]), "omoda": bool(r[3]), "phone": r[4], "delivery_type": r[5], "dostavka": int(r[6]), "out_of_stock": bool(r[7]), "refund": r[8] if r[8] is not None else 0, "estimated_time": r[9] if len(r) > 9 else 0, "price": r[10] if len(r) > 10 else "0"}] if r else []
+        return jsonify({"ok": True, "orders": orders})
+    except Exception as e:
+        print(f"Status Error: {e}")
+        return jsonify({"ok": False, "error": str(e)})
 
 @app.route("/api/foods/list", methods=["GET"])
 def api_foods_list():
@@ -4268,5 +4579,5 @@ if __name__ == '__main__':
     print(f"Если страница не открывается:")
     print(f"1. Временно отключите Windows Firewall.")
     print(f"2. Установите тип сети Wi-Fi в Windows на 'Private'.")
-    print(f"------------------------------------------------------")
+    print(f"--------------c:/Users/Anis/Desktop/qwer/app.py----------------------------------------")
     app.run(debug=True, host="0.0.0.0", port=port)
