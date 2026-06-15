@@ -330,17 +330,19 @@ def init_db() -> None:
         ("БАСКЕТ", "130", "Фастфуд", "36.png", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
     ]
 
-    # Тафтиши мавҷудияти хӯрокҳо ва ворид кардани онҳо бо сутуни subcategory
-    for f in sample_foods:
-        name, price, cat, img = f[0], f[1], f[2], f[3]
-        # Агар дарозии элемент 6 бошад, пас индекси 4 subcategory аст
-        sub = f[4] if len(f) == 6 else ""
-        created = f[-1]
-        
-        cur.execute("""
-            INSERT OR IGNORE INTO foods (name, price, category, subcategory, image_url, created)
-            VALUES (?, ?, ?, ?, ?, ?)
-        """, (name, price, cat, sub, img, created))
+    # Танҳо агар ҷадвали хӯрокҳо холӣ бошад, маълумоти намунавиро илова мекунем
+    cur.execute("SELECT COUNT(*) FROM foods")
+    if cur.fetchone()[0] == 0:
+        for f in sample_foods:
+            name, price, cat, img = f[0], f[1], f[2], f[3]
+            # Агар дарозии элемент 6 бошад, пас индекси 4 subcategory аст
+            sub = f[4] if len(f) == 6 else ""
+            created = f[-1]
+            
+            cur.execute("""
+                INSERT OR IGNORE INTO foods (name, price, category, subcategory, image_url, created)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, (name, price, cat, sub, img, created))
 
     # Тоза кардани расмҳои гумшуда барои пешгирӣ аз хатогии 404
     cur.execute("UPDATE foods SET image_url = '' WHERE image_url IN ('d9.png', 'd10.png', 'd11.png')")
@@ -2413,10 +2415,6 @@ HTML_TEMPLATE = r"""
                 try {
                     await requestFs.call(docEl);
                     cleanFullScreenEvents();
-                    // Қулф кардани экран ба ҳолати албомӣ барои намуди беҳтар
-                    if (screen.orientation && screen.orientation.lock) {
-                        await screen.orientation.lock('landscape').catch(() => {});
-                    }
                 } catch (err) {
                     // Игнори хатогӣ, агар браузер иҷозат надиҳад
                 }
@@ -2718,7 +2716,45 @@ HTML_TEMPLATE = r"""
                 updateTopControlsByScroll();
                 startCustomerStatusPolling();
                 updateNotifBadge(); // Навсозии баҷ ҳангоми ворид шудан
+                
+                // Setup Push Notifications
+                setupPushNotifications(profile.id);
             }, 0);
+        }
+
+        async function setupPushNotifications(customerId) {
+            if (!('serviceWorker' in navigator) || !('PushManager' in window)) return;
+            
+            try {
+                const registration = await navigator.serviceWorker.register('/sw.js');
+                const permission = await Notification.requestPermission();
+                if (permission !== 'granted') return;
+
+                let subscription = await registration.pushManager.getSubscription();
+                if (!subscription) {
+                    subscription = await registration.pushManager.subscribe({
+                        userVisibleOnly: true,
+                        applicationServerKey: urlBase64ToUint8Array("{{ vapid_public_key }}")
+                    });
+                }
+
+                await fetch('/api/push/subscribe', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ customer_id: customerId, subscription: subscription })
+                });
+            } catch (e) { console.error("Push Error:", e); }
+        }
+
+        function urlBase64ToUint8Array(base64String) {
+            const padding = '='.repeat((4 - base64String.length % 4) % 4);
+            const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+            const rawData = window.atob(base64);
+            const outputArray = new Uint8Array(rawData.length);
+            for (let i = 0; i < rawData.length; ++i) {
+                outputArray[i] = rawData.charCodeAt(i);
+            }
+            return outputArray;
         }
     </script>
     <script>
@@ -4215,9 +4251,6 @@ HTML_TEMPLATE = r"""
             const vid = document.getElementById(vidId);
             if (vid.requestFullscreen) {
                 vid.requestFullscreen().then(() => {
-                    if (screen.orientation && screen.orientation.lock) {
-                        screen.orientation.lock('landscape').catch(e => console.log("Orientation lock not supported"));
-                    }
                 });
             } else if (vid.webkitRequestFullscreen) {
                 vid.webkitRequestFullscreen(); // Барои iOS (Safari)
@@ -4444,7 +4477,7 @@ def api_orders_update_status():
     order_id, field = data.get("id"), data.get("field")
     db_value = int(data.get("value", 0))
     estimated_time = data.get("estimated_time")
-    conn = sqlite3.connect(DB_PATH); cur = conn.cursor()
+    conn = sqlite3.connect(DB_PATH, timeout=20); cur = conn.cursor()
     if field == 'qabyl' and estimated_time is not None:
         cur.execute(f"UPDATE orders SET {field} = ?, estimated_time = ? WHERE id = ?", (db_value, estimated_time, order_id))
     else:
@@ -4461,7 +4494,7 @@ def api_orders_update_status():
 def api_orders_customer_status():
     customer_id = request.args.get("customer_id", "")
     try:
-        conn = sqlite3.connect(DB_PATH); cur = conn.cursor()
+        conn = sqlite3.connect(DB_PATH, timeout=20); cur = conn.cursor()
         cur.execute("SELECT id, food, qabyl, omoda, phone, delivery_type, dostavka, out_of_stock, refund, estimated_time, price FROM orders WHERE customer_id = ? ORDER BY id DESC LIMIT 1", (customer_id,))
         r = cur.fetchone(); conn.close()
         orders = [{"id": r[0], "food": r[1], "qabyl": bool(r[2]), "omoda": bool(r[3]), "phone": r[4], "delivery_type": r[5], "dostavka": int(r[6]), "out_of_stock": bool(r[7]), "refund": r[8] if r[8] is not None else 0, "estimated_time": r[9] if len(r) > 9 else 0, "price": r[10] if len(r) > 10 else "0"}] if r else []
@@ -4472,7 +4505,7 @@ def api_orders_customer_status():
 
 @app.route("/api/foods/list", methods=["GET"])
 def api_foods_list():
-    conn = sqlite3.connect(DB_PATH); cur = conn.cursor()
+    conn = sqlite3.connect(DB_PATH, timeout=20); cur = conn.cursor()
     cur.execute("SELECT id, name, price, category, image_url, description FROM foods"); rows = cur.fetchall(); conn.close()
     return jsonify({"ok": True, "foods": [{"id": r[0], "name": r[1], "price": r[2], "category": r[3], "image_url": r[4], "description": r[5]} for r in rows]})
 
@@ -4529,7 +4562,7 @@ def get_all_aktsii():
 
 @app.route('/')
 def home():
-    return render_template_string(HTML_TEMPLATE, orders=get_orders(), categories=get_all_foods(), text_reviews=get_all_reviews(), aktsii=get_all_aktsii())
+    return render_template_string(HTML_TEMPLATE, orders=get_orders(), categories=get_all_foods(), text_reviews=get_all_reviews(), aktsii=get_all_aktsii(), vapid_public_key=VAPID_PUBLIC_KEY)
 
 @app.route('/food/<int:food_id>')
 def food_detail(food_id):
@@ -4580,4 +4613,6 @@ if __name__ == '__main__':
     print(f"1. Временно отключите Windows Firewall.")
     print(f"2. Установите тип сети Wi-Fi в Windows на 'Private'.")
     print(f"--------------c:/Users/Anis/Desktop/qwer/app.py----------------------------------------")
-    app.run(debug=True, host="0.0.0.0", port=port)
+    # Дар муҳити корӣ (Production) Gunicorn-ро истифода баред:
+    # gunicorn -w 4 -b 0.0.0.0:5000 app:app
+    app.run(debug=False, host="0.0.0.0", port=port)

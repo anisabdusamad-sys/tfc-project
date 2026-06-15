@@ -20,7 +20,7 @@ DB_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "tfc_admin.db"
 
 
 def init_db() -> None:
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=20)
     cur = conn.cursor()
     cur.execute(
         """
@@ -1217,16 +1217,17 @@ HTML = r"""<!DOCTYPE html>
                 return (customerName + ' ' + (o.mijoz_id || '') + ' ' + o.khurok).toLowerCase().includes(q);
             });
             list = list.filter(o => {
-                const done = o.qabyl && o.omoda;
-                const cooking = o.qabyl && !o.omoda;
-                const pending = !o.qabyl;
-                if (filterMode === 'all') {
-                    // Дар режими "Все", заказҳои иҷрошударо пинҳон мекунем, то ки рӯйхат тоза бошад
-                    return !(o.qabyl && o.omoda);
-                }
-                if (filterMode === 'pending') return pending;
-                if (filterMode === 'cooking') return cooking;
-                if (filterMode === 'done') return done;
+                const isDelivery = o.delivery_type === 'delivery';
+                // Заказ считается полностью завершенным только если он доставлен (для доставки) или готов (для самовывоза)
+                const isDone = o.qabyl && o.omoda && (!isDelivery || o.dostavka === 2);
+                const isPending = !o.qabyl;
+                // Ҳамаи заказҳои қабулшуда дар таби "Готовка" мемонанд, то гум нашаванд
+                const inProgress = o.qabyl;
+
+                if (filterMode === 'all') return true; // Ҳамаи заказҳо дар ин ҷо мемонанд
+                if (filterMode === 'pending') return isPending;
+                if (filterMode === 'cooking') return inProgress;
+                if (filterMode === 'done') return isDone;
                 return true;
             });
             return list;
@@ -1485,7 +1486,10 @@ HTML = r"""<!DOCTYPE html>
             } catch (e) {}
             saveOrders();
             renderTable();
-            if (order.qabyl && order.omoda) {
+            
+            // Тафтиши пурра иҷро шудани заказ (барои Доставка — бояд статус 2 шавад)
+            const fullyDone = order.delivery_type === 'delivery' ? (order.qabyl && order.omoda && order.dostavka === 2) : (order.qabyl && order.omoda);
+            if (fullyDone) {
                 createConfetti();
                 toast('Заказ полностью выполнен!');
             }
@@ -2528,7 +2532,7 @@ def api_orders_new():
     payment_method = str(data.get("payment_method") or "online").strip()
     created = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=20)
     cur = conn.cursor()
     cur.execute(
         "INSERT INTO orders (customer, customer_id, food, price, phone, delivery_type, delivery_latitude, delivery_longitude, delivery_address, payment_method, qabyl, omoda, created) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?)",
@@ -2578,7 +2582,7 @@ def api_orders_since():
     except ValueError:
         last_id_int = 0
 
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=20)
     cur = conn.cursor()
     cur.execute(
         "SELECT id, customer, customer_id, food, price, qabyl, omoda, created, phone, delivery_type, dostavka, out_of_stock, refund, delivery_latitude, delivery_longitude, delivery_address, estimated_time, payment_method, tip FROM orders WHERE id > ? ORDER BY id ASC",
@@ -2636,7 +2640,7 @@ def api_orders_update_status():
 
     db_value = str(value) if field == 'food' else (float(value) if field == 'refund' else int(value))
         
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=20)
     cur = conn.cursor()
     
     # Гирифтани маълумоти кунунӣ барои навсозии таърих ва пешгирӣ аз такрор
@@ -2695,7 +2699,7 @@ def api_orders_update_status():
 
     # Фиристодани Push агар статус "ҳа" (1) шавад
     if updated and db_value == 1:
-        conn = sqlite3.connect(DB_PATH); cur = conn.cursor()
+        conn = sqlite3.connect(DB_PATH, timeout=20); cur = conn.cursor()
         cur.execute("SELECT subscription_json FROM push_subscriptions WHERE customer_id = ?", (customer_id,))
         sub_row = cur.fetchone()
         if sub_row:
@@ -2767,7 +2771,7 @@ def api_orders_update_status():
 
 @app.route("/api/orders/clear-all", methods=["POST"])
 def api_orders_clear_all():
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=20)
     cur = conn.cursor()
     cur.execute("DELETE FROM orders")
     # Ин фармон рақамгузории (ID)-ро аз нав ба 1 мегардонад
@@ -2778,7 +2782,7 @@ def api_orders_clear_all():
 
 @app.route("/api/orders/delete/<int:order_id>", methods=["DELETE"])
 def api_order_delete_db(order_id):
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=20)
     cur = conn.cursor()
     cur.execute("DELETE FROM orders WHERE id = ?", (order_id,))
     conn.commit()
@@ -2792,7 +2796,7 @@ def api_orders_customer_status():
     if not customer_id:
         return jsonify({"ok": True, "orders": []})
 
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=20)
     cur = conn.cursor()
     cur.execute(
         "SELECT id, food, qabyl, omoda, created, estimated_time FROM orders WHERE customer_id = ? ORDER BY id ASC",
@@ -2873,7 +2877,7 @@ def api_foods_add():
     if not name or not price:
         return jsonify({"ok": False, "error": "missing_fields"}), 400
 
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=20)
     cur = conn.cursor()
     try:
         cur.execute(
@@ -2927,7 +2931,7 @@ def api_foods_update(food_id):
     if not name or not price:
         return jsonify({"ok": False, "error": "missing_fields"}), 400
 
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=20)
     cur = conn.cursor()
     try:
         cur.execute(
@@ -2947,7 +2951,7 @@ def api_foods_delete(food_id):
     if request.method == "OPTIONS":
         return ("", 204)
 
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=20)
     cur = conn.cursor()
     cur.execute("DELETE FROM foods WHERE id = ?", (food_id,))
     conn.commit()
@@ -2957,7 +2961,7 @@ def api_foods_delete(food_id):
 
 @app.route("/api/aktsii/list", methods=["GET"])
 def api_aktsii_list():
-    conn = sqlite3.connect(DB_PATH); cur = conn.cursor()
+    conn = sqlite3.connect(DB_PATH, timeout=20); cur = conn.cursor()
     cur.execute("SELECT id, title, price, description, image_url, created FROM aktsii ORDER BY id DESC")
     rows = cur.fetchall(); conn.close()
     return jsonify({"ok": True, "aktsii": [{"id": r[0], "title": r[1], "price": r[2], "description": r[3], "image_url": r[4], "created": r[5]} for r in rows]})
@@ -2980,7 +2984,7 @@ def api_aktsii_add():
             file.save(os.path.join(UPLOAD_FOLDER, filename))
             image_url = filename
 
-    conn = sqlite3.connect(DB_PATH); cur = conn.cursor()
+    conn = sqlite3.connect(DB_PATH, timeout=20); cur = conn.cursor()
     cur.execute("INSERT INTO aktsii (title, price, description, image_url, created) VALUES (?, ?, ?, ?, ?)",
                 (title, price, description, image_url, datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
     conn.commit(); conn.close()
@@ -2988,14 +2992,14 @@ def api_aktsii_add():
 
 @app.route("/api/aktsii/delete/<int:aktsii_id>", methods=["DELETE"])
 def api_aktsii_delete(aktsii_id):
-    conn = sqlite3.connect(DB_PATH); cur = conn.cursor()
+    conn = sqlite3.connect(DB_PATH, timeout=20); cur = conn.cursor()
     cur.execute("DELETE FROM aktsii WHERE id = ?", (aktsii_id,))
     conn.commit(); conn.close()
     return jsonify({"ok": True})
 
 @app.route("/api/orders/full-history", methods=["GET"])
 def api_full_order_history():
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=20)
     cur = conn.cursor()
     cur.execute("SELECT customer, customer_id, food, price, phone, delivery_type, created, payment_method FROM full_order_history")
     rows = cur.fetchall()
@@ -3009,7 +3013,7 @@ def api_full_order_history():
 
 @app.route("/api/orders/clear-full-history", methods=["POST"])
 def api_clear_full_history():
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=20)
     cur = conn.cursor()
     cur.execute("DELETE FROM full_order_history")
     cur.execute("DELETE FROM sqlite_sequence WHERE name='full_order_history'")
@@ -3019,7 +3023,7 @@ def api_clear_full_history():
 
 @app.route("/api/stats/daily-revenue", methods=["GET"])
 def api_daily_revenue():
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=20)
     cur = conn.cursor()
     # Гирифтани маблағ ва шумораи заказҳо дар як рӯз
     cur.execute("SELECT COUNT(DISTINCT customer_id), SUM(amount), day FROM revenue_history GROUP BY day")
@@ -3032,7 +3036,7 @@ def api_daily_revenue():
 
 @app.route("/api/stats/popular-foods", methods=["GET"])
 def api_popular_foods():
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=20)
     cur = conn.cursor()
     # Гирифтани ҳамаи сабтҳо барои коркард дар Python
     cur.execute("SELECT food, price FROM full_order_history")
@@ -3078,7 +3082,7 @@ def api_popular_foods():
 
 @app.route("/api/customers/delete/<string:customer_id>", methods=["DELETE"])
 def api_customers_delete(customer_id):
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=20)
     cur = conn.cursor()
     cur.execute("DELETE FROM customers WHERE customer_id = ?", (customer_id,))
     conn.commit()
@@ -3088,7 +3092,7 @@ def api_customers_delete(customer_id):
 
 @app.route("/api/stats/clear-history", methods=["POST"])
 def api_stats_clear_history():
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=20)
     cur = conn.cursor()
     cur.execute("DELETE FROM revenue_history")
     # Ин фармон рақамгузории (ID)-ро аз нав ба 1 мегардонад
@@ -3099,7 +3103,7 @@ def api_stats_clear_history():
 
 @app.route("/api/customers/list", methods=["GET"])
 def api_customers_list():
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=20)
     cur = conn.cursor()
     cur.execute("SELECT full_name, customer_id, created FROM customers ORDER BY id DESC")
     rows = cur.fetchall(); conn.close()
@@ -3108,14 +3112,14 @@ def api_customers_list():
 @app.route("/api/settings/get", methods=["GET"])
 def api_get_setting():
     key = request.args.get("key")
-    conn = sqlite3.connect(DB_PATH); cur = conn.cursor()
+    conn = sqlite3.connect(DB_PATH, timeout=20); cur = conn.cursor()
     cur.execute("SELECT value FROM settings WHERE key = ?", (key,)); r = cur.fetchone(); conn.close()
     return jsonify({"ok": True, "val": r[0] if r else ""})
 
 @app.route("/api/settings/set", methods=["POST"])
 def api_set_setting():
     data = request.get_json()
-    conn = sqlite3.connect(DB_PATH); cur = conn.cursor()
+    conn = sqlite3.connect(DB_PATH, timeout=20); cur = conn.cursor()
     cur.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (data['key'], data['val']))
     conn.commit(); conn.close()
     return jsonify({"ok": True})
@@ -3139,4 +3143,6 @@ if __name__ == '__main__':
     print(f"")
     print(f"🏠 ССЫЛКА НА КОМПЬЮТЕРЕ: http://127.0.0.1:{admin_port}")
     print(f"="*60 + "\n")
-    app.run(debug=True, host="0.0.0.0", port=admin_port)
+    # Дар муҳити корӣ (Production) Gunicorn-ро истифода баред:
+    # gunicorn -w 4 -b 0.0.0.0:5001 bilol:app
+    app.run(debug=False, host="0.0.0.0", port=admin_port)
