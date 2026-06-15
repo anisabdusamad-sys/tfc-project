@@ -74,6 +74,7 @@ def init_db() -> None:
     
     cur.execute("CREATE TABLE IF NOT EXISTS customers (id INTEGER PRIMARY KEY AUTOINCREMENT, full_name TEXT NOT NULL, customer_id TEXT UNIQUE NOT NULL, created TEXT NOT NULL)")
     cur.execute("CREATE TABLE IF NOT EXISTS reviews (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, text TEXT NOT NULL, stars INTEGER NOT NULL, image_url TEXT, created TEXT NOT NULL)")
+    cur.execute("CREATE TABLE IF NOT EXISTS push_subscriptions (id INTEGER PRIMARY KEY AUTOINCREMENT, customer_id TEXT UNIQUE, subscription_json TEXT)")
 
     # Сохтани ҷадвали revenue_history барои графикҳо
     cur.execute(
@@ -3123,6 +3124,86 @@ def api_set_setting():
     cur.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (data['key'], data['val']))
     conn.commit(); conn.close()
     return jsonify({"ok": True})
+
+@app.route("/api/push/subscribe", methods=["POST"])
+def api_push_subscribe():
+    data = request.get_json()
+    customer_id = data.get("customer_id")
+    sub_json = json.dumps(data.get("subscription"))
+    conn = sqlite3.connect(DB_PATH); cur = conn.cursor()
+    cur.execute("INSERT OR REPLACE INTO push_subscriptions (customer_id, subscription_json) VALUES (?, ?)", (customer_id, sub_json))
+    conn.commit(); conn.close()
+    return jsonify({"ok": True})
+
+@app.route("/api/customers/register", methods=["POST"])
+def api_customers_register():
+    data = request.get_json() or {}
+    full_name = data.get("full_name")
+    customer_id = data.get("customer_id")
+    if not full_name or not customer_id:
+        return jsonify({"ok": False, "error": "missing_data"}), 400
+    created = datetime.now().strftime("%d.%m.%Y %H:%M")
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cur = conn.cursor()
+        cur.execute("INSERT OR IGNORE INTO customers (full_name, customer_id, created) VALUES (?, ?, ?)", (full_name, customer_id, created))
+        conn.commit(); conn.close()
+        return jsonify({"ok": True})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+verification_codes = {}
+@app.route("/api/auth/send-code", methods=["POST"])
+def api_send_code():
+    data = request.get_json() or {}
+    phone = data.get("phone", "").strip()
+    if not phone: return jsonify({"ok": False, "error": "no_phone"})
+    import random
+    code = str(random.randint(1000, 9999))
+    verification_codes[phone] = code
+    print(f"\n[SMS SERVICE] Коди тасдиқ барои {phone}: {code}\n")
+    return jsonify({"ok": True, "debug_code": code})
+
+@app.route("/api/auth/verify-code", methods=["POST"])
+def api_verify_code():
+    data = request.get_json() or {}
+    phone = data.get("phone", "").strip()
+    code = data.get("code", "").strip()
+    if phone in verification_codes and verification_codes[phone] == code:
+        del verification_codes[phone]
+        return jsonify({"ok": True})
+    return jsonify({"ok": False, "error": "wrong_code"})
+
+@app.route("/api/reviews/add", methods=["POST"])
+def api_reviews_add():
+    name = request.form.get("name")
+    text = request.form.get("text")
+    stars = request.form.get("stars")
+    image_url = ""
+    if 'image' in request.files:
+        file = request.files['image']
+        if file and file.filename != '':
+            filename = secure_filename(file.filename)
+            filename = f"rev_{datetime.now().strftime('%Y%m%d%H%M%S')}_{filename}"
+            if not os.path.exists(UPLOAD_FOLDER): os.makedirs(UPLOAD_FOLDER)
+            file.save(os.path.join(UPLOAD_FOLDER, filename))
+            image_url = filename
+    created = datetime.now().strftime("%d.%m.%Y %H:%M")
+    conn = sqlite3.connect(DB_PATH); cur = conn.cursor()
+    cur.execute("INSERT INTO reviews (name, text, stars, image_url, created) VALUES (?, ?, ?, ?, ?)", (name, text, stars, image_url, created))
+    conn.commit(); conn.close()
+    return jsonify({"ok": True})
+
+@app.route("/api/get-next-payment-phone")
+def api_get_next_phone():
+    PAYMENT_PHONE_NUMBERS = ["944975050", "754169090"]
+    conn = sqlite3.connect(DB_PATH); cur = conn.cursor()
+    cur.execute("SELECT value FROM settings WHERE key = 'last_payment_phone_index'")
+    r = cur.fetchone(); last_index = int(r[0]) if r else 0
+    next_index = (last_index + 1) % len(PAYMENT_PHONE_NUMBERS)
+    cur.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('last_payment_phone_index', ?)", (str(next_index),))
+    conn.commit(); conn.close()
+    return jsonify({"ok": True, "phone": PAYMENT_PHONE_NUMBERS[next_index]})
 
 def get_local_ip():
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)

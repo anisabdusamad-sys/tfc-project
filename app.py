@@ -2480,7 +2480,7 @@ HTML_TEMPLATE = r"""
             localStorage.setItem("tfc_session", fullName);
 
             // Регистрация пользователя на сервере
-            fetch('/api/customers/register', {
+            fetch(adminApiBase() + '/api/customers/register', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ full_name: fullName, customer_id: generatedId })
@@ -2546,7 +2546,7 @@ HTML_TEMPLATE = r"""
                 btn.textContent = "Отправка...";
 
                 try {
-                    const res = await fetch('/api/auth/send-code', {
+                    const res = await fetch(adminApiBase() + '/api/auth/send-code', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ phone })
@@ -2581,7 +2581,7 @@ HTML_TEMPLATE = r"""
                 if (code.length !== 4) return alert("Введите 4 цифры!");
 
                 try {
-                    const res = await fetch('/api/auth/verify-code', {
+                    const res = await fetch(adminApiBase() + '/api/auth/verify-code', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ phone, code })
@@ -2738,7 +2738,7 @@ HTML_TEMPLATE = r"""
                     });
                 }
 
-                await fetch('/api/push/subscribe', {
+                await fetch(adminApiBase() + '/api/push/subscribe', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ customer_id: customerId, subscription: subscription })
@@ -3267,7 +3267,7 @@ HTML_TEMPLATE = r"""
         async function deleteReview(id) {
             const code = prompt("Введите код для удаления:");
             if (code === "anis1234") {
-                const res = await fetch(`/api/reviews/delete/${id}`, { method: 'POST' });
+                const res = await fetch(adminApiBase() + `/api/reviews/delete/${id}`, { method: 'POST' });
                 const data = await res.json();
                 if (data.ok) {
                     location.reload();
@@ -3461,7 +3461,7 @@ HTML_TEMPLATE = r"""
         window.addEventListener("scroll", updateTopControlsByScroll);
 
         function adminApiBase() {
-            return "";
+            return "https://tfc-admin-panel.onrender.com";
         }
 
         let selectedOrderPayload = null;
@@ -4046,7 +4046,7 @@ HTML_TEMPLATE = r"""
 
             document.getElementById('btn-pickup').onclick = () => { 
                 // Гирифтани рақами навбатӣ барои Самовывоз (Гардиш)
-                fetch('/api/get-next-payment-phone')
+                fetch(adminApiBase() + '/api/get-next-payment-phone')
                     .then(r => r.json())
                     .then(data => {
                         overlay.remove(); 
@@ -4292,7 +4292,7 @@ HTML_TEMPLATE = r"""
 
 @app.route('/admin')
 def admin_page():
-    return render_template_string(ADMIN_HTML)
+    return redirect("https://tfc-admin-panel.onrender.com/")
 
 @app.route('/sw.js')
 def serve_sw():
