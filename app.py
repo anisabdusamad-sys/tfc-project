@@ -4558,7 +4558,8 @@ def get_all_reviews():
                 if rev.get('image_url'):
                     rev['image_url_full'] = f"{ADMIN_URL}/static/images/{rev['image_url']}"
             return reviews
-    except: return []
+    except: pass
+    return []
 
 def get_all_aktsii():
     try:
@@ -4570,7 +4571,8 @@ def get_all_aktsii():
                 if item.get('image_url'):
                     item['image_url_full'] = f"{ADMIN_URL}/static/images/{item['image_url']}"
             return aktsii
-    except: return []
+    except: pass
+    return []
 
 @app.route('/')
 def home():
