@@ -3,14 +3,11 @@ import sqlite3
 import json
 import random
 import os
-import requests
-from flask import Flask, render_template_string, url_for, request, jsonify, send_from_directory, redirect, g
+from flask import Flask, render_template_string, url_for, request, jsonify, send_from_directory, redirect
 from datetime import datetime
 import re
 from pywebpush import webpush, WebPushException
 from werkzeug.utils import secure_filename
-
-ADMIN_URL = "https://tfc-admin-panel.onrender.com"
 
 app = Flask(__name__)
 UPLOAD_FOLDER = 'static/images'
@@ -3247,14 +3244,14 @@ HTML_TEMPLATE = r"""
             }
 
             const formData = new FormData();
-            formData.append('name', sessionName || "Меҳмон");
+            formData.append('name', sessionName || "Гость");
             formData.append('text', text);
             formData.append('stars', parseInt(ratingEl.value));
             if (fileInput.files[0]) {
                 formData.append('image', fileInput.files[0]);
             }
 
-            const res = await fetch(adminApiBase() + '/api/reviews/add', {
+            const res = await fetch('/api/reviews/add', {
                 method: 'POST',
                 body: formData
             });
@@ -3990,7 +3987,7 @@ HTML_TEMPLATE = r"""
         function showDeliverySelection(onSelect) { // onSelect(type, phone)
             const overlay = document.createElement('div');
             overlay.className = "fixed inset-0 z-[12000] bg-black/80 backdrop-blur-md flex items-center justify-center p-6";
-            overlay.innerHTML = \`
+            overlay.innerHTML = `
                 <div class="bg-zinc-900 border border-white/10 p-8 rounded-[32px] max-w-sm w-full text-center shadow-2xl animate-in zoom-in duration-300 overflow-y-auto max-h-[90vh]">
                     <div id="delivery-step-1">
                     <h2 class="text-xl font-black text-white mb-2">КАК ВАМ УДОБНО?</h2>
@@ -4014,7 +4011,7 @@ HTML_TEMPLATE = r"""
                         </button>
                     </div>
                 </div>
-            \`;
+            `;
             document.body.appendChild(overlay);
             
             document.getElementById('btn-delivery').onclick = () => { 
@@ -4038,8 +4035,8 @@ HTML_TEMPLATE = r"""
                 if (address.length < 5) return alert("Пожалуйста, введите полный адрес!");
                 sessionStorage.setItem('delivery_address', address);
                 
-                // Гирифтани рақами навбатӣ барои Доставка аз Админ
-                fetch(adminApiBase() + '/api/get-next-payment-phone')
+                // Гирифтани рақами навбатӣ барои Доставка
+                fetch('/api/get-next-payment-phone')
                     .then(r => r.json())
                     .then(data => {
                         overlay.remove(); 
@@ -4048,7 +4045,7 @@ HTML_TEMPLATE = r"""
             };
 
             document.getElementById('btn-pickup').onclick = () => { 
-                // Гирифтани рақами навбатӣ барои Самовывоз аз Админ
+                // Гирифтани рақами навбатӣ барои Самовывоз (Гардиш)
                 fetch(adminApiBase() + '/api/get-next-payment-phone')
                     .then(r => r.json())
                     .then(data => {
@@ -4526,63 +4523,46 @@ def get_orders():
 
 def get_all_foods():
     try:
-        # Гирифтани меню мустақиман аз Admin API
-        r = requests.get(f"{ADMIN_URL}/api/foods/list", timeout=5)
-        r.raise_for_status()
-        data = r.json()
-        foods = data.get('foods')
-        if isinstance(foods, list):
-            # Ислоҳи URL-и суратҳо ва гурӯҳбандӣ
-            for f in foods:
-                if f.get('image_url'):
-                    f['image_url_full'] = f"{ADMIN_URL}/static/images/{f['image_url']}"
-                else:
-                    f['image_url_full'] = ""
-            
-            # Group by category and detect media type
-            cat_map = {}
-            for f in foods:
-                f['is_video'] = bool(f.get('image_url') and f['image_url'].lower().endswith(('.mp4', '.webm', '.mov', '.ogg')))
-                cat_map.setdefault(f['category'], []).append(f)
-            return cat_map
-        else:
-            return {}
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.row_factory = sqlite3.Row
+            cur = conn.cursor()
+            cur.execute("SELECT id, name, price, category, subcategory, image_url, description FROM foods")
+            foods = [dict(row) for row in cur.fetchall()]
+        
+        # Group by category and detect media type
+        cat_map = {}
+        for f in foods:
+            f['is_video'] = bool(f.get('image_url') and f['image_url'].lower().endswith(('.mp4', '.webm', '.mov', '.ogg')))
+            cat_map.setdefault(f['category'], []).append(f)
+        return cat_map
     except Exception as e:
         print(f"Database error in get_all_foods: {e}")
         return {}
 
 def get_all_reviews():
     try:
-        r = requests.get(f"{ADMIN_URL}/api/reviews/list", timeout=5)
-        r.raise_for_status()
-        reviews = r.json().get('reviews')
-        if isinstance(reviews, list):
-            for rev in reviews:
-                if rev.get('image_url'):
-                    rev['image_url_full'] = f"{ADMIN_URL}/static/images/{rev['image_url']}"
-            return reviews
-    except Exception as e:
-        print(f"Error fetching reviews: {e}")
-    return []
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.row_factory = sqlite3.Row
+            cur = conn.cursor()
+            cur.execute("SELECT id, name, text, stars, image_url, created FROM reviews ORDER BY id DESC")
+            return [dict(row) for row in cur.fetchall()]
+    except: return []
 
 def get_all_aktsii():
     try:
-        r = requests.get(f"{ADMIN_URL}/api/aktsii/list", timeout=5)
-        r.raise_for_status()
-        aktsii = r.json().get('aktsii')
-        if isinstance(aktsii, list):
-            for item in aktsii:
-                item['is_video'] = bool(item.get('image_url') and item['image_url'].lower().endswith(('.mp4', '.webm', '.mov', '.ogg')))
-                if item.get('image_url'):
-                    item['image_url_full'] = f"{ADMIN_URL}/static/images/{item['image_url']}"
-            return aktsii
-    except Exception as e:
-        print(f"Error fetching aktsii: {e}")
-    return []
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.row_factory = sqlite3.Row
+            cur = conn.cursor()
+            cur.execute("SELECT title, price, description, image_url, created FROM aktsii ORDER BY id DESC")
+            results = [dict(row) for row in cur.fetchall()]
+            for r in results:
+                r['is_video'] = bool(r.get('image_url') and r['image_url'].lower().endswith(('.mp4', '.webm', '.mov', '.ogg')))
+            return results
+    except: return []
 
 @app.route('/')
 def home():
-    return render_template_string(HTML_TEMPLATE, categories=get_all_foods(), text_reviews=get_all_reviews(), aktsii=get_all_aktsii(), vapid_public_key=VAPID_PUBLIC_KEY, admin_url=ADMIN_URL)
+    return render_template_string(HTML_TEMPLATE, orders=get_orders(), categories=get_all_foods(), text_reviews=get_all_reviews(), aktsii=get_all_aktsii(), vapid_public_key=VAPID_PUBLIC_KEY)
 
 @app.route('/food/<int:food_id>')
 def food_detail(food_id):
