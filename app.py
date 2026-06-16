@@ -4528,23 +4528,25 @@ def get_all_foods():
     try:
         # Гирифтани меню мустақиман аз Admin API
         r = requests.get(f"{ADMIN_URL}/api/foods/list", timeout=5)
-        if r.status_code == 200:
-            foods = r.json().get('foods', [])
-            # Ислоҳи URL-и суратҳо
+        r.raise_for_status()
+        data = r.json()
+        foods = data.get('foods')
+        if isinstance(foods, list):
+            # Ислоҳи URL-и суратҳо ва гурӯҳбандӣ
             for f in foods:
                 if f.get('image_url'):
                     f['image_url_full'] = f"{ADMIN_URL}/static/images/{f['image_url']}"
                 else:
                     f['image_url_full'] = ""
+            
+            # Group by category and detect media type
+            cat_map = {}
+            for f in foods:
+                f['is_video'] = bool(f.get('image_url') and f['image_url'].lower().endswith(('.mp4', '.webm', '.mov', '.ogg')))
+                cat_map.setdefault(f['category'], []).append(f)
+            return cat_map
         else:
             return {}
-        
-        # Group by category and detect media type
-        cat_map = {}
-        for f in foods:
-            f['is_video'] = bool(f.get('image_url') and f['image_url'].lower().endswith(('.mp4', '.webm', '.mov', '.ogg')))
-            cat_map.setdefault(f['category'], []).append(f)
-        return cat_map
     except Exception as e:
         print(f"Database error in get_all_foods: {e}")
         return {}
@@ -4552,26 +4554,30 @@ def get_all_foods():
 def get_all_reviews():
     try:
         r = requests.get(f"{ADMIN_URL}/api/reviews/list", timeout=5)
-        if r.status_code == 200:
-            reviews = r.json().get('reviews', [])
+        r.raise_for_status()
+        reviews = r.json().get('reviews')
+        if isinstance(reviews, list):
             for rev in reviews:
                 if rev.get('image_url'):
                     rev['image_url_full'] = f"{ADMIN_URL}/static/images/{rev['image_url']}"
             return reviews
-    except: pass
+    except Exception as e:
+        print(f"Error fetching reviews: {e}")
     return []
 
 def get_all_aktsii():
     try:
         r = requests.get(f"{ADMIN_URL}/api/aktsii/list", timeout=5)
-        if r.status_code == 200:
-            aktsii = r.json().get('aktsii', [])
+        r.raise_for_status()
+        aktsii = r.json().get('aktsii')
+        if isinstance(aktsii, list):
             for item in aktsii:
                 item['is_video'] = bool(item.get('image_url') and item['image_url'].lower().endswith(('.mp4', '.webm', '.mov', '.ogg')))
                 if item.get('image_url'):
                     item['image_url_full'] = f"{ADMIN_URL}/static/images/{item['image_url']}"
             return aktsii
-    except: pass
+    except Exception as e:
+        print(f"Error fetching aktsii: {e}")
     return []
 
 @app.route('/')
