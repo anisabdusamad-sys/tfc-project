@@ -2558,6 +2558,7 @@ def api_orders_new():
     return jsonify(
         {
             "ok": True,
+            "order_id": order_id,
             "order": {
                 "id": order_id,
                 "customer": customer,
@@ -2652,7 +2653,7 @@ def api_orders_update_status():
     current_val, customer_id, food_name, del_type, created_at, old_refund, orig_price_str, old_est_time = row
     
     # Агар статус тағйир наёфта бошад (барои майдонҳои техникӣ), Push намефиристем
-    if field not in ('food', 'refund') and int(current_val) == db_value:
+    if field not in ('food', 'refund') and str(current_val) == str(db_value):
         conn.close()
         return jsonify({"ok": True, "note": "no_change"})
     
@@ -2660,6 +2661,7 @@ def api_orders_update_status():
         cur.execute(f"UPDATE orders SET qabyl = {qm()}, estimated_time = {qm()} WHERE id = {qm()}", (db_value, estimated_time, order_id))
     else:
         cur.execute(f"UPDATE orders SET {field} = {qm()} WHERE id = {qm()}", (db_value, order_id))
+        if field == 'food': food_name = db_value # Навсозии ном барои Push дар поён
 
     # ТАФТИШИ УМУМӢ: Агар заказ пурра хат зада шуда бошад, онро ҳамчун "Иҷрошуда" қайд мекунем
     # Ин тафтиш бояд ҳар вақте ки хӯрок, маблағ ё статус тағйир меёбад, иҷро шавад
@@ -2696,8 +2698,15 @@ def api_orders_update_status():
     updated = cur.rowcount > 0
     conn.close()
 
-    # Фиристодани Push агар статус "ҳа" (1) шавад
-    if updated and db_value == 1:
+    # Фиристодани Push: 
+    # 1. Агар статус 1 шавад 
+    # 2. Ё агар матни хӯрок/рефунд тағйир ёбад (барои хат задан)
+    should_notify = (updated and (
+        (field in ('qabyl', 'omoda', 'dostavka', 'out_of_stock') and db_value == 1) or
+        (field in ('food', 'refund'))
+    ))
+
+    if should_notify:
         conn = get_db_connection(); cur = conn.cursor()
         cur.execute(f"SELECT subscription_json FROM push_subscriptions WHERE customer_id = {qm()}", (customer_id,))
         sub_row = cur.fetchone()
@@ -2713,7 +2722,7 @@ def api_orders_update_status():
                 orig_p = float(p_clean) if p_clean else 0.0
             except: orig_p = 0.0
             
-            # Находим названия блюд, которые были зачеркнуты (<s>...</s>)
+            # Ёфтани хӯрокҳои хатзада
             struck_items = re.findall(r'<s>(.*?)</s>', food_name)
             struck_str = f" \"{', '.join(struck_items)}\"" if struck_items else ""
 
@@ -2726,13 +2735,14 @@ def api_orders_update_status():
                     else:
                         time_str = f" Ваш заказ будет готов примерно через {t_val} минут."
 
-                if ref_val >= orig_p and orig_p > 0:
+                # Агар ҳамаи хӯрокҳо хат зада шуда бошанд
+                if ref_val >= orig_p and orig_p > 0: 
                     msg = f"К сожалению, нет никаких блюд и мы вернем ваши деньги: {ref_val} смн."
                 elif ref_val > 0:
                     msg = f"Извините, блюд{struck_str} нет в наличии, и мы вернем вам ваши деньги: {ref_val} смн."
                 else:
                     msg = f"Заказ принят!{time_str} Пожалуйста, переведите оплату на номер 754169090."
-            elif field == 'out_of_stock':
+            elif field in ('out_of_stock', 'food', 'refund'):
                 if ref_val >= orig_p and orig_p > 0:
                     msg = f"К сожалению, нет никаких блюд и мы вернем ваши деньги: {ref_val} смн."
                 else:
@@ -2743,7 +2753,7 @@ def api_orders_update_status():
                     conn.close()
                     return jsonify({"ok": updated})
                 if del_type == 'pickup':
-                    msg = "Ваш заказ готов! Пожалуйста, заберите свое блюдо."
+                    msg = "Ваш заказ готов! Пожалуйста, заберите свои блюда."
                 else:
                     msg = "Ваш заказ готов! Через несколько минут мы его доставим. 🚀"
             elif field == 'dostavka':

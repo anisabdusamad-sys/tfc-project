@@ -4080,7 +4080,6 @@ HTML_TEMPLATE = r"""
 
         function showLiveStatus(message, isOk) {
             // Илова ба таърихи хабарҳо
-            notificationsHistory.push({ message, isOk, time: new Date().toLocaleTimeString('ru-RU'), isNew: true });
             notificationsHistory.push({ 
                 message, 
                 isOk, 
@@ -4155,8 +4154,10 @@ HTML_TEMPLATE = r"""
 
                 let oosPart = "";
                 // Тафтиш: Оё ҳамаи хӯрокҳо хат зада шудаанд?
-                const cleanPrice = parseFloat(String(last.price || 0).replace(',', '.').replace(/[^0-9.]/g, ''));
-                if (last.out_of_stock && parseFloat(last.refund) >= cleanPrice && cleanPrice > 0) {
+                const cleanPrice = parseFloat(String(last.price || 0).replace(',', '.').match(/[0-9.]+/)[0]);
+                const cleanRefund = parseFloat(String(last.refund || 0).replace(',', '.').match(/[0-9.]+/)[0] || 0);
+                
+                if (last.out_of_stock && cleanRefund >= cleanPrice && cleanPrice > 0) {
                     statusType = "cancelled_oos";
                     statusText = `К сожалению, нет никаких блюд и мы вернем ваши деньги: ${last.refund} смн. ❌`;
                 } else if (last.out_of_stock) {
@@ -4181,7 +4182,7 @@ HTML_TEMPLATE = r"""
                     statusText = "Ваш заказ доставлен! Приятного аппетита! 🏠✅";
                     statusType = "ready"; ok = true;
                 } else if (last.omoda) {
-                    statusText = last.delivery_type === 'pickup' ? "Ваш заказ готов! Пожалуйста, заберите свое блюдо." : "Ваш заказ готов! Через несколько минут мы его доставим. 🚀";
+                    statusText = last.delivery_type === 'pickup' ? "Ваш заказ готов! Пожалуйста, заберите свои блюда." : "Ваш заказ готов! Через несколько минут мы его доставим. 🚀";
                     statusType = "ready"; ok = true;
                 } else if (last.qabyl) {
                     let timeMsg = "";
@@ -4541,10 +4542,12 @@ def get_orders():
 
 def get_all_foods():
     try:
-        with get_db_connection() as conn:
-            cur = get_cursor(conn)
-            cur.execute("SELECT id, name, price, category, subcategory, image_url, description FROM foods")
-            foods = [to_dict(row, cur) for row in cur.fetchall()]
+        # Гирифтани меню аз Admin тавассути API
+        resp = requests.get(f"{ADMIN_URL}/api/foods/list", timeout=5)
+        data = resp.json()
+        if not data.get("ok"):
+            return {}
+        foods = data.get("foods", [])
         
         # Group by category and detect media type
         cat_map = {}
@@ -4566,13 +4569,15 @@ def get_all_reviews():
 
 def get_all_aktsii():
     try:
-        with get_db_connection() as conn:
-            cur = get_cursor(conn)
-            cur.execute("SELECT title, price, description, image_url, created FROM aktsii ORDER BY id DESC")
-            results = [to_dict(row, cur) for row in cur.fetchall()]
-            for r in results:
-                r['is_video'] = bool(r.get('image_url') and r['image_url'].lower().endswith(('.mp4', '.webm', '.mov', '.ogg')))
-            return results
+        # Гирифтани аксияҳо аз Admin тавассути API
+        resp = requests.get(f"{ADMIN_URL}/api/aktsii/list", timeout=5)
+        data = resp.json()
+        if not data.get("ok"):
+            return []
+        results = data.get("aktsii", [])
+        for r in results:
+            r['is_video'] = bool(r.get('image_url') and r['image_url'].lower().endswith(('.mp4', '.webm', '.mov', '.ogg')))
+        return results
     except: return []
 
 @app.route('/')
