@@ -1,5 +1,6 @@
 from flask import Flask, render_template_string, request, jsonify, send_from_directory
 import sqlite3
+import psycopg2
 import json
 import os
 import socket
@@ -17,15 +18,37 @@ VAPID_PRIVATE_KEY = "m1N2B3V4C5X6Z7A8S9D0F1G2H3J4K5L6m1N2B3V4C5X"
 VAPID_CLAIMS = {"sub": "mailto:admin@tfc-kulob.tj"}
 
 DB_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "tfc_admin.db"))
+DATABASE_URL = os.environ.get("DATABASE_URL")
+
+def get_db_connection():
+    if DATABASE_URL:
+        # Пайвастшавӣ ба PostgreSQL (барои Render)
+        return psycopg2.connect(DATABASE_URL, sslmode='require')
+    # Пайвастшавӣ ба SQLite (локалӣ)
+    return sqlite3.connect(DB_PATH, timeout=20)
+
+def qm():
+    # Postgres %s-ро истифода мебарад, SQLite ?-ро
+    return "%s" if DATABASE_URL else "?"
 
 
 def init_db() -> None:
-    conn = sqlite3.connect(DB_PATH, timeout=20)
+    conn = get_db_connection()
     cur = conn.cursor()
+
+    id_type = "SERIAL PRIMARY KEY" if DATABASE_URL else "INTEGER PRIMARY KEY AUTOINCREMENT"
+
+    def col_exists(table, col):
+        if DATABASE_URL:
+            cur.execute("SELECT column_name FROM information_schema.columns WHERE table_name=%s AND column_name=%s", (table, col))
+            return cur.fetchone() is not None
+        cur.execute(f"PRAGMA table_info({table})")
+        return any(r[1] == col for r in cur.fetchall())
+
     cur.execute(
-        """
+        f"""
         CREATE TABLE IF NOT EXISTS orders (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id {id_type},
             customer TEXT NOT NULL,
             customer_id TEXT NOT NULL DEFAULT '',
             food TEXT NOT NULL,
@@ -42,61 +65,44 @@ def init_db() -> None:
         )
         """
     )
-    cur.execute("PRAGMA table_info(orders)")
-    cols = [r[1] for r in cur.fetchall()]
-    if "customer_id" not in cols:
-        cur.execute("ALTER TABLE orders ADD COLUMN customer_id TEXT NOT NULL DEFAULT ''")
-    if "qabyl" not in cols:
-        cur.execute("ALTER TABLE orders ADD COLUMN qabyl INTEGER NOT NULL DEFAULT 0")
-    if "omoda" not in cols:
-        cur.execute("ALTER TABLE orders ADD COLUMN omoda INTEGER NOT NULL DEFAULT 0")
-    if "phone" not in cols:
-        cur.execute("ALTER TABLE orders ADD COLUMN phone TEXT NOT NULL DEFAULT ''")
-    if "delivery_type" not in cols:
-        cur.execute("ALTER TABLE orders ADD COLUMN delivery_type TEXT NOT NULL DEFAULT ''")
-    if "dostavka" not in cols:
-        cur.execute("ALTER TABLE orders ADD COLUMN dostavka INTEGER NOT NULL DEFAULT 0")
-    if "out_of_stock" not in cols:
-        cur.execute("ALTER TABLE orders ADD COLUMN out_of_stock INTEGER NOT NULL DEFAULT 0")
-    if "tip" not in cols: cur.execute("ALTER TABLE orders ADD COLUMN tip TEXT NOT NULL DEFAULT ''")
-    if "refund" not in cols:
-        cur.execute("ALTER TABLE orders ADD COLUMN refund REAL NOT NULL DEFAULT 0")
-    if "delivery_latitude" not in cols:
-        cur.execute("ALTER TABLE orders ADD COLUMN delivery_latitude TEXT DEFAULT ''")
-    if "delivery_longitude" not in cols:
-        cur.execute("ALTER TABLE orders ADD COLUMN delivery_longitude TEXT DEFAULT ''")
-    if "delivery_address" not in cols:
-        cur.execute("ALTER TABLE orders ADD COLUMN delivery_address TEXT DEFAULT ''")
-    if "estimated_time" not in cols:
-        cur.execute("ALTER TABLE orders ADD COLUMN estimated_time INTEGER DEFAULT 0")
-    if "payment_method" not in cols:
-        cur.execute("ALTER TABLE orders ADD COLUMN payment_method TEXT DEFAULT 'online'")
     
-    cur.execute("CREATE TABLE IF NOT EXISTS customers (id INTEGER PRIMARY KEY AUTOINCREMENT, full_name TEXT NOT NULL, customer_id TEXT UNIQUE NOT NULL, created TEXT NOT NULL)")
-    cur.execute("CREATE TABLE IF NOT EXISTS reviews (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, text TEXT NOT NULL, stars INTEGER NOT NULL, image_url TEXT, created TEXT NOT NULL)")
-    cur.execute("CREATE TABLE IF NOT EXISTS push_subscriptions (id INTEGER PRIMARY KEY AUTOINCREMENT, customer_id TEXT UNIQUE, subscription_json TEXT)")
+    # Тафтиши сутунҳо бо усули универсалӣ
+    fields = [
+        ("customer_id", "TEXT NOT NULL DEFAULT ''"), ("qabyl", "INTEGER NOT NULL DEFAULT 0"),
+        ("omoda", "INTEGER NOT NULL DEFAULT 0"), ("phone", "TEXT NOT NULL DEFAULT ''"),
+        ("delivery_type", "TEXT NOT NULL DEFAULT ''"), ("dostavka", "INTEGER NOT NULL DEFAULT 0"),
+        ("out_of_stock", "INTEGER NOT NULL DEFAULT 0"), ("tip", "TEXT NOT NULL DEFAULT ''"),
+        ("refund", "REAL NOT NULL DEFAULT 0"), ("delivery_latitude", "TEXT DEFAULT ''"),
+        ("delivery_longitude", "TEXT DEFAULT ''"), ("delivery_address", "TEXT DEFAULT ''"),
+        ("estimated_time", "INTEGER DEFAULT 0"), ("payment_method", "TEXT DEFAULT 'online'")
+    ]
+    for col, defn in fields:
+        if not col_exists("orders", col):
+            cur.execute(f"ALTER TABLE orders ADD COLUMN {col} {defn}")
+
+    cur.execute(f"CREATE TABLE IF NOT EXISTS customers (id {id_type}, full_name TEXT NOT NULL, customer_id TEXT UNIQUE NOT NULL, created TEXT NOT NULL)")
+    cur.execute(f"CREATE TABLE IF NOT EXISTS reviews (id {id_type}, name TEXT NOT NULL, text TEXT NOT NULL, stars INTEGER NOT NULL, image_url TEXT, created TEXT NOT NULL)")
+    cur.execute(f"CREATE TABLE IF NOT EXISTS push_subscriptions (id {id_type}, customer_id TEXT UNIQUE, subscription_json TEXT)")
 
     # Сохтани ҷадвали revenue_history барои графикҳо
     cur.execute(
-        """
+        f"""
         CREATE TABLE IF NOT EXISTS revenue_history (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id {id_type},
             amount REAL NOT NULL,
             day TEXT NOT NULL,
             customer_id TEXT DEFAULT ''
         )
         """
     )
-    cur.execute("PRAGMA table_info(revenue_history)")
-    rev_cols = [r[1] for r in cur.fetchall()]
-    if "customer_id" not in rev_cols:
+    if not col_exists("revenue_history", "customer_id"):
         cur.execute("ALTER TABLE revenue_history ADD COLUMN customer_id TEXT DEFAULT ''")
 
     # Сохтани ҷадвали full_order_history барои таърихи пурра
     cur.execute(
-        """
+        f"""
         CREATE TABLE IF NOT EXISTS full_order_history (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id {id_type},
             customer TEXT NOT NULL,
             customer_id TEXT NOT NULL,
             food TEXT NOT NULL,
@@ -107,10 +113,8 @@ def init_db() -> None:
         )
         """
     )
-    cur.execute("PRAGMA table_info(full_order_history)")
-    foh_cols = [r[1] for r in cur.fetchall()]
-    if "tip" not in foh_cols: cur.execute("ALTER TABLE full_order_history ADD COLUMN tip TEXT NOT NULL DEFAULT ''")
-    if "payment_method" not in foh_cols:
+    if not col_exists("full_order_history", "tip"): cur.execute("ALTER TABLE full_order_history ADD COLUMN tip TEXT NOT NULL DEFAULT ''")
+    if not col_exists("full_order_history", "payment_method"):
         cur.execute("ALTER TABLE full_order_history ADD COLUMN payment_method TEXT DEFAULT 'online'")
 
     # Create settings table
@@ -118,9 +122,9 @@ def init_db() -> None:
 
     # Create foods table
     cur.execute(
-        """
+        f"""
         CREATE TABLE IF NOT EXISTS foods (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id {id_type},
             name TEXT NOT NULL UNIQUE,
             price TEXT NOT NULL,
             category TEXT NOT NULL,
@@ -130,20 +134,13 @@ def init_db() -> None:
         )
         """
     )
-    cur.execute("PRAGMA table_info(foods)")
-    cols = [r[1] for r in cur.fetchall()]
-    if "image_url" not in cols:
-        cur.execute("ALTER TABLE foods ADD COLUMN image_url TEXT NOT NULL DEFAULT ''")
-    if "description" not in cols:
-        cur.execute("ALTER TABLE foods ADD COLUMN description TEXT NOT NULL DEFAULT ''")
-    if "subcategory" not in cols:
-        cur.execute("ALTER TABLE foods ADD COLUMN subcategory TEXT NOT NULL DEFAULT ''")
+    if not col_exists("foods", "subcategory"): cur.execute("ALTER TABLE foods ADD COLUMN subcategory TEXT NOT NULL DEFAULT ''")
 
     # Create aktsii table and keep price/image/description available
     cur.execute(
-        """
+        f"""
         CREATE TABLE IF NOT EXISTS aktsii (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id {id_type},
             title TEXT NOT NULL,
             price TEXT NOT NULL DEFAULT '',
             description TEXT NOT NULL DEFAULT '',
@@ -152,14 +149,6 @@ def init_db() -> None:
         )
         """
     )
-    cur.execute("PRAGMA table_info(aktsii)")
-    cols = [r[1] for r in cur.fetchall()]
-    if "price" not in cols:
-        cur.execute("ALTER TABLE aktsii ADD COLUMN price TEXT NOT NULL DEFAULT ''")
-    if "description" not in cols:
-        cur.execute("ALTER TABLE aktsii ADD COLUMN description TEXT NOT NULL DEFAULT ''")
-    if "image_url" not in cols:
-        cur.execute("ALTER TABLE aktsii ADD COLUMN image_url TEXT NOT NULL DEFAULT ''")
 
     # Sync foods list (Force Update)
     foods_data = [
@@ -317,11 +306,11 @@ def init_db() -> None:
     ]
 
     # Ин қисм маълумоти рӯйхатро ба базаи маълумот менависад
+    # Тағйирот: Истифодаи ON CONFLICT барои PostgreSQL
+    upsert_sql = f"INSERT INTO foods (name, price, category, subcategory, image_url, description, created) VALUES ({qm()},{qm()},{qm()},{qm()},{qm()},{qm()},{qm()}) ON CONFLICT (name) DO NOTHING" if DATABASE_URL else \
+                 f"INSERT OR IGNORE INTO foods (name, price, category, subcategory, image_url, description, created) VALUES (?, ?, ?, ?, ?, ?, ?)"
     for f in foods_data:
-        cur.execute("""
-            INSERT OR REPLACE INTO foods (name, price, category, subcategory, image_url, description, created)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        """, f)
+        cur.execute(upsert_sql, f)
 
     conn.commit()
     conn.close()

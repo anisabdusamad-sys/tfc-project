@@ -1,5 +1,6 @@
 import socket
 import sqlite3
+import psycopg2
 import json
 import random
 import os
@@ -24,20 +25,37 @@ VAPID_CLAIMS = {"sub": "mailto:admin@tfc-kulob.tj"}
 # Рӯйхати рақамҳо барои гардиш ҳангоми Доставка
 PAYMENT_PHONE_NUMBERS = ["944975050", "754169090"]
 
+DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tfc_admin.db")
+DATABASE_URL = os.environ.get("DATABASE_URL")
+
+def get_db_connection():
+    if DATABASE_URL:
+        # Пайвастшавӣ ба PostgreSQL (барои Render)
+        return psycopg2.connect(DATABASE_URL, sslmode='require')
+    # Пайвастшавӣ ба SQLite (локалӣ)
+    return sqlite3.connect(DB_PATH, timeout=20)
+
+def qm():
+    # Postgres %s-ро истифода мебарад, SQLite ?-ро
+    return "%s" if DATABASE_URL else "?"
+
 def get_setting(key, default_value=None):
     """Гирифтани танзимот аз база"""
-    conn = sqlite3.connect(DB_PATH, timeout=20)
+    conn = get_db_connection()
     cur = conn.cursor()
-    cur.execute("SELECT value FROM settings WHERE key = ?", (key,))
+    cur.execute(f"SELECT value FROM settings WHERE key = {qm()}", (key,))
     result = cur.fetchone()
     conn.close()
     return result[0] if result else default_value
 
 def set_setting(key, value):
     """Захира кардани танзимот дар база"""
-    conn = sqlite3.connect(DB_PATH, timeout=20)
+    conn = get_db_connection()
     cur = conn.cursor()
-    cur.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, str(value)))
+    if DATABASE_URL:
+        cur.execute("INSERT INTO settings (key, value) VALUES (%s, %s) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value", (key, str(value)))
+    else:
+        cur.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, str(value)))
     conn.commit()
     conn.close()
 
@@ -49,18 +67,24 @@ def get_next_payment_phone_for_rotation():
     set_setting("last_payment_phone_index", str(next_index))
     return PAYMENT_PHONE_NUMBERS[next_index]
 
-# Rohi mutlaq baroi muvofiqat bo bilol.py
-DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tfc_admin.db")
-
 def init_db() -> None:
-    conn = sqlite3.connect(DB_PATH, timeout=20) # Ensure timeout is applied here
+    conn = get_db_connection()
     cur = conn.cursor()
     
+    id_type = "SERIAL PRIMARY KEY" if DATABASE_URL else "INTEGER PRIMARY KEY AUTOINCREMENT"
+
+    def col_exists(table, col):
+        if DATABASE_URL:
+            cur.execute("SELECT column_name FROM information_schema.columns WHERE table_name=%s AND column_name=%s", (table, col))
+            return cur.fetchone() is not None
+        cur.execute(f"PRAGMA table_info({table})")
+        return any(r[1] == col for r in cur.fetchall())
+
     # 1. Аввал ҷадвалҳоро месозем
     cur.execute(
-        """
+        f"""
         CREATE TABLE IF NOT EXISTS orders (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id {id_type},
             customer TEXT NOT NULL,
             customer_id TEXT NOT NULL DEFAULT '',
             food TEXT NOT NULL,
@@ -77,38 +101,35 @@ def init_db() -> None:
         )
         """
     )
-    cur.execute("CREATE TABLE IF NOT EXISTS reviews (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, text TEXT NOT NULL, stars INTEGER NOT NULL, image_url TEXT, created TEXT NOT NULL)")
-    cur.execute("CREATE TABLE IF NOT EXISTS foods (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE, price TEXT NOT NULL, category TEXT NOT NULL, image_url TEXT NOT NULL DEFAULT '', description TEXT NOT NULL DEFAULT '', created TEXT NOT NULL)")
-    cur.execute("CREATE TABLE IF NOT EXISTS push_subscriptions (id INTEGER PRIMARY KEY AUTOINCREMENT, customer_id TEXT UNIQUE, subscription_json TEXT)")
-    cur.execute("CREATE TABLE IF NOT EXISTS aktsii (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL, price TEXT NOT NULL DEFAULT '', description TEXT, image_url TEXT, created TEXT NOT NULL)")
-    cur.execute("PRAGMA table_info(aktsii)")
-    a_cols = [r[1] for r in cur.fetchall()]
-    if "price" not in a_cols:
+    cur.execute(f"CREATE TABLE IF NOT EXISTS reviews (id {id_type}, name TEXT NOT NULL, text TEXT NOT NULL, stars INTEGER NOT NULL, image_url TEXT, created TEXT NOT NULL)")
+    cur.execute(f"CREATE TABLE IF NOT EXISTS foods (id {id_type}, name TEXT NOT NULL UNIQUE, price TEXT NOT NULL, category TEXT NOT NULL, image_url TEXT NOT NULL DEFAULT '', description TEXT NOT NULL DEFAULT '', created TEXT NOT NULL)")
+    cur.execute(f"CREATE TABLE IF NOT EXISTS push_subscriptions (id {id_type}, customer_id TEXT UNIQUE, subscription_json TEXT)")
+    cur.execute(f"CREATE TABLE IF NOT EXISTS aktsii (id {id_type}, title TEXT NOT NULL, price TEXT NOT NULL DEFAULT '', description TEXT, image_url TEXT, created TEXT NOT NULL)")
+    
+    if not col_exists("aktsii", "price"):
         cur.execute("ALTER TABLE aktsii ADD COLUMN price TEXT NOT NULL DEFAULT ''")
 
-    cur.execute("CREATE TABLE IF NOT EXISTS customers (id INTEGER PRIMARY KEY AUTOINCREMENT, full_name TEXT NOT NULL, customer_id TEXT UNIQUE NOT NULL, created TEXT NOT NULL)")
+    cur.execute(f"CREATE TABLE IF NOT EXISTS customers (id {id_type}, full_name TEXT NOT NULL, customer_id TEXT UNIQUE NOT NULL, created TEXT NOT NULL)")
 
     # Ҷадвали махсус барои нигоҳдории доимии даромад (History)
     cur.execute(
-        """
+        f"""
         CREATE TABLE IF NOT EXISTS revenue_history (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id {id_type},
             amount REAL NOT NULL,
             day TEXT NOT NULL,
             customer_id TEXT DEFAULT ''
         )
         """
     )
-    cur.execute("PRAGMA table_info(revenue_history)")
-    rev_cols = [r[1] for r in cur.fetchall()]
-    if "customer_id" not in rev_cols:
+    if not col_exists("revenue_history", "customer_id"):
         cur.execute("ALTER TABLE revenue_history ADD COLUMN customer_id TEXT DEFAULT ''")
 
     # Ҷадвали таърихи пурраи заказҳо (Архив)
     cur.execute(
-        """
+        f"""
         CREATE TABLE IF NOT EXISTS full_order_history (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id {id_type},
             customer TEXT NOT NULL,
             customer_id TEXT NOT NULL,
             food TEXT NOT NULL,
@@ -122,47 +143,37 @@ def init_db() -> None:
     )
 
     # 2. Баъд сутунҳоро тафтиш ва илова мекунем
-    cur.execute("PRAGMA table_info(orders)")
-    cols = [r[1] for r in cur.fetchall()]
-    if "customer_id" not in cols: cur.execute("ALTER TABLE orders ADD COLUMN customer_id TEXT NOT NULL DEFAULT ''")
-    if "qabyl" not in cols: cur.execute("ALTER TABLE orders ADD COLUMN qabyl INTEGER NOT NULL DEFAULT 0")
-    if "omoda" not in cols: cur.execute("ALTER TABLE orders ADD COLUMN omoda INTEGER NOT NULL DEFAULT 0")
-    if "phone" not in cols:
-        cur.execute("ALTER TABLE orders ADD COLUMN phone TEXT NOT NULL DEFAULT ''")
-    if "delivery_type" not in cols:
-        cur.execute("ALTER TABLE orders ADD COLUMN delivery_type TEXT NOT NULL DEFAULT ''")
-    if "dostavka" not in cols:
-        cur.execute("ALTER TABLE orders ADD COLUMN dostavka INTEGER NOT NULL DEFAULT 0")
-    if "out_of_stock" not in cols: cur.execute("ALTER TABLE orders ADD COLUMN out_of_stock INTEGER NOT NULL DEFAULT 0")
-    if "delivery_latitude" not in cols: cur.execute("ALTER TABLE orders ADD COLUMN delivery_latitude TEXT DEFAULT ''")
-    if "delivery_longitude" not in cols: cur.execute("ALTER TABLE orders ADD COLUMN delivery_longitude TEXT DEFAULT ''")
-    if "delivery_address" not in cols: cur.execute("ALTER TABLE orders ADD COLUMN delivery_address TEXT DEFAULT ''")
-    if "tip" not in cols: cur.execute("ALTER TABLE orders ADD COLUMN tip TEXT NOT NULL DEFAULT ''")
-    if "refund" not in cols: cur.execute("ALTER TABLE orders ADD COLUMN refund REAL DEFAULT 0")
-    if "estimated_time" not in cols: cur.execute("ALTER TABLE orders ADD COLUMN estimated_time INTEGER DEFAULT 0")
-    if "payment_method" not in cols:
-        cur.execute("ALTER TABLE orders ADD COLUMN payment_method TEXT DEFAULT 'online'")
+    order_fields = [
+        ("customer_id", "TEXT NOT NULL DEFAULT ''"), ("qabyl", "INTEGER NOT NULL DEFAULT 0"),
+        ("omoda", "INTEGER NOT NULL DEFAULT 0"), ("phone", "TEXT NOT NULL DEFAULT ''"),
+        ("delivery_type", "TEXT NOT NULL DEFAULT ''"), ("dostavka", "INTEGER NOT NULL DEFAULT 0"),
+        ("out_of_stock", "INTEGER NOT NULL DEFAULT 0"), ("delivery_latitude", "TEXT DEFAULT ''"),
+        ("delivery_longitude", "TEXT DEFAULT ''"), ("delivery_address", "TEXT DEFAULT ''"),
+        ("tip", "TEXT NOT NULL DEFAULT ''"), ("refund", "REAL DEFAULT 0"),
+        ("estimated_time", "INTEGER DEFAULT 0"), ("payment_method", "TEXT DEFAULT 'online'")
+    ]
+    for col, defn in order_fields:
+        if not col_exists("orders", col):
+            cur.execute(f"ALTER TABLE orders ADD COLUMN {col} {defn}")
 
     # Ҷадвал барои танзимоти динамикӣ
     cur.execute("CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)")
 
-    cur.execute("PRAGMA table_info(foods)")
-    f_cols = [r[1] for r in cur.fetchall()]
-    if "description" not in f_cols: cur.execute("ALTER TABLE foods ADD COLUMN description TEXT NOT NULL DEFAULT ''")
-    if "subcategory" not in f_cols:
+    if not col_exists("foods", "description"): cur.execute("ALTER TABLE foods ADD COLUMN description TEXT NOT NULL DEFAULT ''")
+    if not col_exists("foods", "subcategory"):
         cur.execute("ALTER TABLE foods ADD COLUMN subcategory TEXT NOT NULL DEFAULT ''")
     
-    cur.execute("PRAGMA table_info(reviews)")
-    r_cols = [r[1] for r in cur.fetchall()]
-    if "image_url" not in r_cols: cur.execute("ALTER TABLE reviews ADD COLUMN image_url TEXT")
+    if not col_exists("reviews", "image_url"): cur.execute("ALTER TABLE reviews ADD COLUMN image_url TEXT")
 
-    cur.execute("PRAGMA table_info(full_order_history)")
-    foh_cols = [r[1] for r in cur.fetchall()]
-    if "tip" not in foh_cols: cur.execute("ALTER TABLE full_order_history ADD COLUMN tip TEXT NOT NULL DEFAULT ''")
-    if "payment_method" not in foh_cols:
+    if not col_exists("full_order_history", "tip"): cur.execute("ALTER TABLE full_order_history ADD COLUMN tip TEXT NOT NULL DEFAULT ''")
+    if not col_exists("full_order_history", "payment_method"):
         cur.execute("ALTER TABLE full_order_history ADD COLUMN payment_method TEXT DEFAULT 'online'")
 
     # 3. Илова кардани додаҳои намунавӣ (Sync with bilol.py)
+    # Тағйирот: Истифодаи ON CONFLICT барои PostgreSQL
+    upsert_sql = f"INSERT INTO foods (name, price, category, subcategory, image_url, created) VALUES ({qm()},{qm()},{qm()},{qm()},{qm()},{qm()}) ON CONFLICT (name) DO NOTHING" if DATABASE_URL else \
+                 "INSERT OR IGNORE INTO foods (name, price, category, subcategory, image_url, created) VALUES (?, ?, ?, ?, ?, ?)"
+
     sample_foods = [
         # ЛЕТНЕЕ МЕНЮ
         ("СМУЗИ БАНАН + КИВИ", "26", "Летнее меню", "d1.png", "Смузи", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
@@ -2393,31 +2404,26 @@ HTML_TEMPLATE = r"""
     </main>
     <script>
         document.addEventListener("DOMContentLoaded", () => {
-            if (localStorage.getItem("tfc_session")) showApp();
-            else {
+            const session = localStorage.getItem("tfc_session");
+            const profile = localStorage.getItem("tfc_customer_profile");
+            
+            if (session && profile) {
+                showApp();
+            } else {
                 const auth = document.getElementById('auth-section');
                 if (auth) auth.classList.remove('hidden');
             }
         });
 
-        // Пайваст кардани Fullscreen ба тамоми экран ва экрани боркунӣ
-        async function triggerFullScreen() {
-            // Агар аллакай дар режими пурра бошад, ягон кор намекунем
+        function triggerFullScreen() {
             if (document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement || document.msFullscreenElement) {
                 cleanFullScreenEvents();
                 return;
             }
-
             const docEl = document.documentElement;
             const requestFs = docEl.requestFullscreen || docEl.mozRequestFullScreen || docEl.webkitRequestFullscreen || docEl.msRequestFullscreen;
-
             if (requestFs) {
-                try {
-                    await requestFs.call(docEl);
-                    cleanFullScreenEvents();
-                } catch (err) {
-                    // Игнори хатогӣ, агар браузер иҷозат надиҳад
-                }
+                requestFs.call(docEl).then(cleanFullScreenEvents).catch(() => {});
             }
         }
 
@@ -2447,13 +2453,13 @@ HTML_TEMPLATE = r"""
                 return;
             }
 
-            // 2. Тафтиши ҳарфҳои англисӣ (танҳо кириллица иҷозат аст)
+            // Тафтиши ҳарфҳои англисӣ
             if (/[a-zA-Z]/.test(fullName)) {
                 alert("Лутфан танҳо бо ҳарфҳои кириллӣ (русӣ/тоҷикӣ) нависед. Ҳарфҳои англисӣ манъ аст."); // Changed error message
                 return;
             }
 
-            // 3. Тафтиши ҳарфи аввали калон ва Caps Lock барои ҳар як калима
+            // Тафтиши ҳарфи аввали калон
             for (const word of words) {
                 if (word.length === 0) continue; // Skip empty strings from split
 
@@ -2479,7 +2485,6 @@ HTML_TEMPLATE = r"""
             localStorage.setItem("tfc_customer_profile", JSON.stringify(profile));
             localStorage.setItem("tfc_session", fullName);
 
-            // Регистрация пользователя на сервере
             fetch(adminApiBase() + '/api/customers/register', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -2758,172 +2763,59 @@ HTML_TEMPLATE = r"""
         }
     </script>
     <script>
-        function animateSection(id) {
-            // Ensure the element exists before trying to animate
-            const el = document.getElementById(id);
-            if (!el) {
-                console.warn(`Element with ID '${id}' not found for animation.`);
-                return;
+        function showSection(sectionId) {
+            const sections = ['intro-section', 'menu', 'menu-section', 'pizza-section', 'sushi-section', 'fastfood-section', 'summer-menu-section', 'combo-section', 'otziv-section', 'aktsii-section', 'adres-section', 'vakansii-section', 'notifications-section'];
+            sections.forEach(id => {
+                const el = document.getElementById(id);
+                if (el) el.style.display = 'none';
+            });
+            const target = document.getElementById(sectionId);
+            if (target) {
+                target.style.display = (sectionId === 'adres-section' || sectionId === 'intro-section') ? 'flex' : 'block';
+                if (typeof animateSection === 'function') animateSection(sectionId);
             }
+            setTopControlsVisible(sectionId === 'menu' || sectionId === 'intro-section');
+            window.scrollTo(0, 0);
+        }
 
+        function animateSection(id) {
+            const el = document.getElementById(id);
+            if (!el) return;
             el.classList.remove('page-transition');
-            void el.offsetWidth; // Trigger reflow
+            void el.offsetWidth;
             el.classList.add('page-transition');
         }
 
         function showMenu() {
-            setTimeout(() => {
-                document.getElementById('intro-section').style.display = 'none';
-                document.getElementById('menu').style.display = 'none';
-                const menuSection = document.getElementById('menu-section');
-                const subCategories = document.getElementById('menu-subcategories');
-                const productGrid = document.getElementById('filtered-product-grid');
-
-                menuSection.style.display = 'block';
-                subCategories.style.display = 'grid';
-                document.getElementById('category-back-btn').style.display = 'none'; // Hide sub-back
-                document.getElementById('main-back-btn').style.display = 'inline-flex'; // Show main-back
-                
-                menuSection.querySelector('h2').innerHTML = 'МЕНЮ';
-                // Пинҳон кардани хӯрокҳо то он даме, ки зергурӯҳ интихоб шавад
-                productGrid.querySelectorAll('.product-card').forEach(c => c.style.display = 'none');
-
-                if(typeof animateSection === 'function') animateSection('menu-section');
-                setTopControlsVisible(false);
-                // Танҳо пас аз иваз шудани контент ба боло меравем
-                window.scrollTo(0, 0);
-                document.documentElement.scrollTop = 0;
-                document.body.scrollTop = 0;
-            }, 150);
-        }
-
-        function filterMenu(subCategory) {
-            const menuSection = document.getElementById('menu-section');
-            const grid = document.getElementById('filtered-product-grid');
-            const title = menuSection.querySelector('h2');
-
-            // Таъхири кӯтоҳ барои эффекти синамоӣ
-            setTimeout(() => {
-                // Пинҳон кардани тугмаҳои зеркатегорияҳо барои намуди "саҳифаи нав"
-                document.getElementById('menu-subcategories').style.display = 'none';
-                document.getElementById('main-back-btn').style.display = 'none';
-                document.getElementById('category-back-btn').style.display = 'inline-flex';
-                
-                title.innerHTML = subCategory.toUpperCase();
-
-                const cards = grid.querySelectorAll('.product-card');
-                cards.forEach(card => {
-                    const cardSub = card.getAttribute('data-subcategory') || '';
-                    const name = card.getAttribute('data-name').toUpperCase();
-                    let show = false;
-                    
-                    if (cardSub === subCategory) {
-                        show = true;
-                    } else if (!cardSub) {
-                        if (subCategory === 'Паста') show = name.includes('ПАСТА') || name.includes('ГНЁЗДА');
-                        if (subCategory === 'Салаты') show = name.includes('САЛАТ') || name.includes('БАКЛАЖАН') || name.includes('ГРЕЧЕСКИЙ');
-                        if (subCategory === 'Супы') show = name.includes('СУП') || name.includes('БОРЩ') || name.includes('ЛАГМАН') || name.includes('ЧАХОВ') || name.includes('МЕРДЖИМЕК');
-                        if (subCategory === 'Горячие блюда') show = name.includes('СТЕКС') || name.includes('КОТЛЕТ') || name.includes('БАРАНИНА') || name.includes('КАБОБ') || name.includes('ЖАРОВНЯ') || name.includes('ТАБАКА') || name.includes('СТЕЙК') || name.includes('КОРЕЙКА');
-                        if (subCategory === 'Десерты') show = name.includes('ЧИЗКЕЙК') || name.includes('РАФАЭЛЛО') || name.includes('НАПОЛЕОН') || name.includes('ТИРАМИСУ') || name.includes('ФРУКТОВАЯ') || name.includes('КЕШЬЮ');
-                        if (subCategory === 'Напитки') show = name.includes('АМЕРИКАНО') || name.includes('КАПУЧИНO') || name.includes('ЛАТТЕ') || name.includes('ЭСПРЕССО') || name.includes('ЧАЙ') || name.includes('КОФЕ') || name.includes('АЙРАН') || name.includes('МОХИТО');
-                    }
-                    card.style.display = show ? 'block' : 'none';
-                });
-
-                // Scroll to top танҳо вақте ки хӯрокҳо иваз шуданд
-                window.scrollTo(0, 0);
-                document.documentElement.scrollTop = 0;
-                document.body.scrollTop = 0;
-
-                // Фаъол кардани аниматсияи Cinematic
-                [title, grid].forEach(el => {
-                    el.classList.remove('page-transition');
-                    void el.offsetWidth; 
-                    el.classList.add('page-transition');
-                });
-            }, 250);
+            showSection('menu-section');
+            document.getElementById('menu-subcategories').style.display = 'grid';
+            document.getElementById('category-back-btn').style.display = 'none';
+            document.getElementById('main-back-btn').style.display = 'inline-flex';
+            document.getElementById('menu-section').querySelector('h2').textContent = 'МЕНЮ';
+            document.getElementById('filtered-product-grid').querySelectorAll('.product-card').forEach(c => c.style.display = 'none');
         }
 
         function hideMenu() {
-            setTimeout(() => {
             stopAllVideos();
-            document.getElementById('menu-section').style.display = 'none';
-            document.getElementById('menu').style.display = 'block';
-            document.getElementById('menu-subcategories').style.display = 'none';
+            showSection('menu');
             document.getElementById('intro-section').style.display = 'flex';
-            if(typeof animateSection === 'function') animateSection('menu');
-            if(typeof animateSection === 'function') animateSection('intro-section');
             updateTopControlsByScroll();
-            window.scrollTo(0, 0);
-            document.documentElement.scrollTop = 0;
-            document.body.scrollTop = 0;
-            }, 350);
         }
-        function showPizza() {
-            setTimeout(() => {
-            document.getElementById('intro-section').style.display = 'none';
-            document.getElementById('menu').style.display = 'none';
-            document.getElementById('pizza-section').style.display = 'block';
-            const pizzaSection = document.getElementById('pizza-section');
-            const subCategories = document.getElementById('pizza-subcategories');
-            const productGrid = document.getElementById('pizza-filtered-product-grid');
 
-            pizzaSection.style.display = 'block';
-            subCategories.style.display = 'grid';
+        function showPizza() {
+            showSection('pizza-section');
+            document.getElementById('pizza-subcategories').style.display = 'grid';
             document.getElementById('pizza-category-back-btn').style.display = 'none';
             document.getElementById('pizza-main-back-btn').style.display = 'inline-flex';
-
-            pizzaSection.querySelector('h2').innerHTML = 'ПИЦЦА';
-            productGrid.querySelectorAll('.product-card').forEach(c => c.style.display = 'none');
-
-            if(typeof animateSection === 'function') animateSection('pizza-section');
-            setTopControlsVisible(false);
-            window.scrollTo(0, 0);
-            document.documentElement.scrollTop = 0;
-            document.body.scrollTop = 0;
-            }, 350);
+            document.getElementById('pizza-section').querySelector('h2').textContent = 'ПИЦЦА';
+            document.getElementById('pizza-filtered-product-grid').querySelectorAll('.product-card').forEach(c => c.style.display = 'none');
         }
 
-        function filterPizza(subCategory) {
-            const pizzaSection = document.getElementById('pizza-section');
-            const grid = document.getElementById('pizza-filtered-product-grid');
-            const title = pizzaSection.querySelector('h2');
-
-            setTimeout(() => {
-                document.getElementById('pizza-subcategories').style.display = 'none';
-                document.getElementById('pizza-main-back-btn').style.display = 'none';
-                document.getElementById('pizza-category-back-btn').style.display = 'inline-flex';
-                
-                title.innerHTML = subCategory.toUpperCase();
-
-                const cards = grid.querySelectorAll('.product-card');
-                cards.forEach(card => {
-                    const cardSub = card.getAttribute('data-subcategory') || '';
-                    card.style.display = (cardSub === subCategory) ? 'block' : 'none';
-                });
-
-                window.scrollTo(0, 0);
-                [title, grid].forEach(el => {
-                    el.classList.remove('page-transition');
-                    void el.offsetWidth; 
-                    el.classList.add('page-transition');
-                });
-            }, 250);
-        }
         function hidePizza() {
-            setTimeout(() => {
             stopAllVideos();
-            document.getElementById('pizza-section').style.display = 'none';
-            document.getElementById('menu').style.display = 'block';
-            document.getElementById('pizza-subcategories').style.display = 'none';
+            showSection('menu');
             document.getElementById('intro-section').style.display = 'flex';
-            animateSection('menu');
-            animateSection('intro-section');
             updateTopControlsByScroll();
-            window.scrollTo(0, 0);
-            document.documentElement.scrollTop = 0;
-            document.body.scrollTop = 0;
-            }, 350);
         }
         function showFastFood() {
             setTimeout(() => {
@@ -4320,15 +4212,15 @@ def api_reviews_add():
             image_url = filename
 
     created = datetime.now().strftime("%d.%m.%Y %H:%M")
-    conn = sqlite3.connect(DB_PATH); cur = conn.cursor()
-    cur.execute("INSERT INTO reviews (name, text, stars, image_url, created) VALUES (?, ?, ?, ?, ?)", (name, text, stars, image_url, created))
+    conn = get_db_connection(); cur = conn.cursor()
+    cur.execute(f"INSERT INTO reviews (name, text, stars, image_url, created) VALUES ({qm()},{qm()},{qm()},{qm()},{qm()})", (name, text, stars, image_url, created))
     conn.commit(); conn.close()
     return jsonify({"ok": True})
 
 @app.route("/api/reviews/delete/<int:review_id>", methods=["POST"])
 def api_reviews_delete(review_id):
-    conn = sqlite3.connect(DB_PATH); cur = conn.cursor()
-    cur.execute("DELETE FROM reviews WHERE id = ?", (review_id,))
+    conn = get_db_connection(); cur = conn.cursor()
+    cur.execute(f"DELETE FROM reviews WHERE id = {qm()}", (review_id,))
     conn.commit(); conn.close()
     return jsonify({"ok": True})
 
@@ -4337,8 +4229,11 @@ def api_push_subscribe():
     data = request.get_json()
     customer_id = data.get("customer_id")
     sub_json = json.dumps(data.get("subscription"))
-    conn = sqlite3.connect(DB_PATH); cur = conn.cursor()
-    cur.execute("INSERT OR REPLACE INTO push_subscriptions (customer_id, subscription_json) VALUES (?, ?)", (customer_id, sub_json))
+    conn = get_db_connection(); cur = conn.cursor()
+    if DATABASE_URL:
+        cur.execute("INSERT INTO push_subscriptions (customer_id, subscription_json) VALUES (%s, %s) ON CONFLICT (customer_id) DO UPDATE SET subscription_json = EXCLUDED.subscription_json", (customer_id, sub_json))
+    else:
+        cur.execute("INSERT OR REPLACE INTO push_subscriptions (customer_id, subscription_json) VALUES (?, ?)", (customer_id, sub_json))
     conn.commit(); conn.close()
     return jsonify({"ok": True})
 
@@ -4352,9 +4247,9 @@ def api_customers_register():
     
     created = datetime.now().strftime("%d.%m.%Y %H:%M")
     try:
-        conn = sqlite3.connect(DB_PATH)
+        conn = get_db_connection()
         cur = conn.cursor()
-        cur.execute("INSERT OR IGNORE INTO customers (full_name, customer_id, created) VALUES (?, ?, ?)", 
+        cur.execute(f"INSERT INTO customers (full_name, customer_id, created) VALUES ({qm()},{qm()},{qm()}) ON CONFLICT (customer_id) DO NOTHING", 
                     (full_name, customer_id, created))
         conn.commit()
         conn.close()
@@ -4426,18 +4321,18 @@ def api_orders_new():
     if not tip:
         tip = "Наличными 💵" if payment_method == "cash" else f"Картой 💳 ({payment_phone})"
     created = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    conn = sqlite3.connect(DB_PATH, timeout=20)
+    conn = get_db_connection()
     cur = conn.cursor() # Ensure timeout is applied here
     # Insert bo hamai maydonho baroi durust namoyish shudan dar admin
-    cur.execute("""
+    cur.execute(f"""
         INSERT INTO orders (customer, customer_id, food, price, phone, delivery_type, tip, delivery_latitude, delivery_longitude, delivery_address, payment_method, qabyl, omoda, dostavka, created)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 0, ?)
+        VALUES ({qm()},{qm()},{qm()},{qm()},{qm()},{qm()},{qm()},{qm()},{qm()},{qm()},{qm()}, 0, 0, 0, {qm()})
     """, (customer, customer_id, food, price, phone, delivery_type, tip, delivery_latitude, delivery_longitude, delivery_address, payment_method, created))
-    order_id = cur.lastrowid
+    
+    order_id = cur.lastrowid if not DATABASE_URL else cur.execute("SELECT LASTVAL()") or cur.fetchone()[0]
     
     # Сабти заказ дар таърихи доимӣ (Архив), то пас аз нест кардан боқӣ монад
-    cur.execute(
-        "INSERT INTO full_order_history (customer, customer_id, food, price, phone, delivery_type, tip, payment_method, created) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    cur.execute(f"INSERT INTO full_order_history (customer, customer_id, food, price, phone, delivery_type, tip, payment_method, created) VALUES ({qm()},{qm()},{qm()},{qm()},{qm()},{qm()},{qm()},{qm()},{qm()})",
         (customer, customer_id, food, price, phone, delivery_type, tip, payment_method, created)
     )
 
@@ -4445,7 +4340,7 @@ def api_orders_new():
     try:
         p_clean = "".join(c for c in str(price).replace(',', '.') if c.isdigit() or c == '.')
         amount = float(p_clean) if p_clean else 0.0
-        cur.execute("INSERT INTO revenue_history (amount, day, customer_id) VALUES (?, ?, ?)", (amount, datetime.now().strftime("%Y-%m-%d"), customer_id))
+        cur.execute(f"INSERT INTO revenue_history (amount, day, customer_id) VALUES ({qm()},{qm()},{qm()})", (amount, datetime.now().strftime("%Y-%m-%d"), customer_id))
     except: pass
 
     conn.commit()
@@ -4461,8 +4356,8 @@ def api_get_next_phone():
 def api_orders_since():
     try:
         last_id = int(request.args.get("last_id", 0))
-        conn = sqlite3.connect(DB_PATH, timeout=20); cur = conn.cursor()
-        cur.execute("SELECT id, customer, customer_id, food, price, qabyl, omoda, created, phone, delivery_type, delivery_latitude, delivery_longitude, delivery_address, estimated_time, tip FROM orders WHERE id > ?", (last_id,))
+        conn = get_db_connection(); cur = conn.cursor()
+        cur.execute(f"SELECT id, customer, customer_id, food, price, qabyl, omoda, created, phone, delivery_type, delivery_latitude, delivery_longitude, delivery_address, estimated_time, tip FROM orders WHERE id > {qm()}", (last_id,))
         rows = cur.fetchall(); conn.close()
         return jsonify({"ok": True, "orders": [{"id": r[0], "customer": r[1], "customer_id": r[2], "food": r[3], "price": r[4], "qabyl": bool(r[5]), "omoda": bool(r[6]), "created": r[7], "phone": r[8], "delivery_type": r[9], "delivery_latitude": r[10] if len(r) > 10 else "", "delivery_longitude": r[11] if len(r) > 11 else "", "delivery_address": r[12] if len(r) > 12 else "", "estimated_time": r[13], "tip": r[14] if len(r) > 14 else ""} for r in rows]})
     except ValueError:
@@ -4477,11 +4372,11 @@ def api_orders_update_status():
     order_id, field = data.get("id"), data.get("field")
     db_value = int(data.get("value", 0))
     estimated_time = data.get("estimated_time")
-    conn = sqlite3.connect(DB_PATH, timeout=20); cur = conn.cursor()
+    conn = get_db_connection(); cur = conn.cursor()
     if field == 'qabyl' and estimated_time is not None:
-        cur.execute(f"UPDATE orders SET {field} = ?, estimated_time = ? WHERE id = ?", (db_value, estimated_time, order_id))
+        cur.execute(f"UPDATE orders SET {field} = {qm()}, estimated_time = {qm()} WHERE id = {qm()}", (db_value, estimated_time, order_id))
     else:
-        cur.execute(f"UPDATE orders SET {field} = ? WHERE id = ?", (db_value, order_id))
+        cur.execute(f"UPDATE orders SET {field} = {qm()} WHERE id = {qm()}", (db_value, order_id))
     conn.commit(); conn.close()
 
     # Push Notification Logic
@@ -4494,8 +4389,8 @@ def api_orders_update_status():
 def api_orders_customer_status():
     customer_id = request.args.get("customer_id", "")
     try:
-        conn = sqlite3.connect(DB_PATH, timeout=20); cur = conn.cursor()
-        cur.execute("SELECT id, food, qabyl, omoda, phone, delivery_type, dostavka, out_of_stock, refund, estimated_time, price FROM orders WHERE customer_id = ? ORDER BY id DESC LIMIT 1", (customer_id,))
+        conn = get_db_connection(); cur = conn.cursor()
+        cur.execute(f"SELECT id, food, qabyl, omoda, phone, delivery_type, dostavka, out_of_stock, refund, estimated_time, price FROM orders WHERE customer_id = {qm()} ORDER BY id DESC LIMIT 1", (customer_id,))
         r = cur.fetchone(); conn.close()
         orders = [{"id": r[0], "food": r[1], "qabyl": bool(r[2]), "omoda": bool(r[3]), "phone": r[4], "delivery_type": r[5], "dostavka": int(r[6]), "out_of_stock": bool(r[7]), "refund": r[8] if r[8] is not None else 0, "estimated_time": r[9] if len(r) > 9 else 0, "price": r[10] if len(r) > 10 else "0"}] if r else []
         return jsonify({"ok": True, "orders": orders})
@@ -4505,17 +4400,18 @@ def api_orders_customer_status():
 
 @app.route("/api/foods/list", methods=["GET"])
 def api_foods_list():
-    conn = sqlite3.connect(DB_PATH, timeout=20); cur = conn.cursor()
+    conn = get_db_connection(); cur = conn.cursor()
     cur.execute("SELECT id, name, price, category, image_url, description FROM foods"); rows = cur.fetchall(); conn.close()
     return jsonify({"ok": True, "foods": [{"id": r[0], "name": r[1], "price": r[2], "category": r[3], "image_url": r[4], "description": r[5]} for r in rows]})
 
 def get_orders():
     try:
-        with sqlite3.connect(DB_PATH) as conn:
-            conn.row_factory = sqlite3.Row
+        with get_db_connection() as conn:
+            # row_factory is not supported in psycopg2 but we can manually dict
             cur = conn.cursor()
             cur.execute("SELECT food, price, qabyl, omoda FROM orders ORDER BY id DESC LIMIT 10")
-            orders = [dict(row) for row in cur.fetchall()]
+            colnames = [desc[0] for desc in cur.description]
+            orders = [dict(zip(colnames, row)) for row in cur.fetchall()]
         return orders
     except Exception as e:
         print(f"Database error: {e}")
@@ -4523,11 +4419,11 @@ def get_orders():
 
 def get_all_foods():
     try:
-        with sqlite3.connect(DB_PATH) as conn:
-            conn.row_factory = sqlite3.Row
+        with get_db_connection() as conn:
             cur = conn.cursor()
             cur.execute("SELECT id, name, price, category, subcategory, image_url, description FROM foods")
-            foods = [dict(row) for row in cur.fetchall()]
+            colnames = [desc[0] for desc in cur.description]
+            foods = [dict(zip(colnames, row)) for row in cur.fetchall()]
         
         # Group by category and detect media type
         cat_map = {}
@@ -4541,20 +4437,20 @@ def get_all_foods():
 
 def get_all_reviews():
     try:
-        with sqlite3.connect(DB_PATH) as conn:
-            conn.row_factory = sqlite3.Row
+        with get_db_connection() as conn:
             cur = conn.cursor()
             cur.execute("SELECT id, name, text, stars, image_url, created FROM reviews ORDER BY id DESC")
-            return [dict(row) for row in cur.fetchall()]
+            colnames = [desc[0] for desc in cur.description]
+            return [dict(zip(colnames, row)) for row in cur.fetchall()]
     except: return []
 
 def get_all_aktsii():
     try:
-        with sqlite3.connect(DB_PATH) as conn:
-            conn.row_factory = sqlite3.Row
+        with get_db_connection() as conn:
             cur = conn.cursor()
             cur.execute("SELECT title, price, description, image_url, created FROM aktsii ORDER BY id DESC")
-            results = [dict(row) for row in cur.fetchall()]
+            colnames = [desc[0] for desc in cur.description]
+            results = [dict(zip(colnames, row)) for row in cur.fetchall()]
             for r in results:
                 r['is_video'] = bool(r.get('image_url') and r['image_url'].lower().endswith(('.mp4', '.webm', '.mov', '.ogg')))
             return results
@@ -4568,20 +4464,20 @@ def home():
 def food_detail(food_id):
     """Display detailed information for a single food item"""
     try:
-        conn = sqlite3.connect(DB_PATH, timeout=20)
-        conn.row_factory = sqlite3.Row
+        conn = get_db_connection()
         cur = conn.cursor()
-        cur.execute("""
+        cur.execute(f"""
             SELECT id, name, price, category, description, image_url, created
-            FROM foods WHERE id = ?
+            FROM foods WHERE id = {qm()}
         """, (food_id,))
         food = cur.fetchone()
+        colnames = [desc[0] for desc in cur.description]
         conn.close()
         
         if not food:
             return redirect('/')
         
-        food = dict(food)
+        food = dict(zip(colnames, food))
         food['image_path'] = f"/static/images/{food['image_url']}" if food['image_url'] else ""
         
         # Check if image is a video
