@@ -19,6 +19,8 @@ VAPID_CLAIMS = {"sub": "mailto:admin@tfc-kulob.tj"}
 
 DB_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "tfc_admin.db"))
 DATABASE_URL = os.environ.get("DATABASE_URL")
+if DATABASE_URL and DATABASE_URL.startswith("postgres://"):
+    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
 
 def get_db_connection():
     if DATABASE_URL:
@@ -2522,17 +2524,17 @@ def api_orders_new():
     payment_method = str(data.get("payment_method") or "online").strip()
     created = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-    conn = sqlite3.connect(DB_PATH, timeout=20)
+    conn = get_db_connection()
     cur = conn.cursor()
     cur.execute(
-        "INSERT INTO orders (customer, customer_id, food, price, phone, delivery_type, delivery_latitude, delivery_longitude, delivery_address, payment_method, qabyl, omoda, created) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?)",
-        (customer, customer_id, food, price, phone, delivery_type, delivery_latitude, delivery_longitude, delivery_address, payment_method, created),
+        f"INSERT INTO orders (customer, customer_id, food, price, phone, delivery_type, delivery_latitude, delivery_longitude, delivery_address, payment_method, qabyl, omoda, created) VALUES ({qm()},{qm()},{qm()},{qm()},{qm()},{qm()},{qm()},{qm()},{qm()},{qm()}, 0, 0, {qm()})",
+        (customer, customer_id, food, price, phone, delivery_type, delivery_latitude, delivery_longitude, delivery_address, payment_method, created)
     )
     order_id = cur.lastrowid
 
     # Log to full history table
     cur.execute(
-        "INSERT INTO full_order_history (customer, customer_id, food, price, phone, delivery_type, payment_method, created) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        f"INSERT INTO full_order_history (customer, customer_id, food, price, phone, delivery_type, payment_method, created) VALUES ({qm()},{qm()},{qm()},{qm()},{qm()},{qm()},{qm()},{qm()})",
         (customer, customer_id, food, price, phone, delivery_type, payment_method, created)
     )
 
@@ -2540,7 +2542,7 @@ def api_orders_new():
     try:
         p_clean = "".join(c for c in str(price).replace(',', '.') if c.isdigit() or c == '.')
         amount = float(p_clean) if p_clean else 0.0
-        cur.execute("INSERT INTO revenue_history (amount, day, customer_id) VALUES (?, ?, ?)", (amount, datetime.now().strftime("%Y-%m-%d"), customer_id))
+        cur.execute(f"INSERT INTO revenue_history (amount, day, customer_id) VALUES ({qm()}, {qm()}, {qm()})", (amount, datetime.now().strftime("%Y-%m-%d"), customer_id))
     except: pass
 
     conn.commit()
@@ -2572,10 +2574,10 @@ def api_orders_since():
     except ValueError:
         last_id_int = 0
 
-    conn = sqlite3.connect(DB_PATH, timeout=20)
+    conn = get_db_connection()
     cur = conn.cursor()
     cur.execute(
-        "SELECT id, customer, customer_id, food, price, qabyl, omoda, created, phone, delivery_type, dostavka, out_of_stock, refund, delivery_latitude, delivery_longitude, delivery_address, estimated_time, payment_method, tip FROM orders WHERE id > ? ORDER BY id ASC",
+        f"SELECT id, customer, customer_id, food, price, qabyl, omoda, created, phone, delivery_type, dostavka, out_of_stock, refund, delivery_latitude, delivery_longitude, delivery_address, estimated_time, payment_method, tip FROM orders WHERE id > {qm()} ORDER BY id ASC",
         (last_id_int,),
     )
     rows = cur.fetchall()
@@ -2630,11 +2632,11 @@ def api_orders_update_status():
 
     db_value = str(value) if field == 'food' else (float(value) if field == 'refund' else int(value))
         
-    conn = sqlite3.connect(DB_PATH, timeout=20)
+    conn = get_db_connection()
     cur = conn.cursor()
     
     # Гирифтани маълумоти кунунӣ барои навсозии таърих ва пешгирӣ аз такрор
-    cur.execute(f"SELECT {field if field != 'food' else 'food'}, customer_id, food, delivery_type, created, refund, price, estimated_time FROM orders WHERE id = ?", (order_id,))
+    cur.execute(f"SELECT {field if field != 'food' else 'food'}, customer_id, food, delivery_type, created, refund, price, estimated_time FROM orders WHERE id = {qm()}", (order_id,))
     row = cur.fetchone()
     if not row:
         conn.close()
@@ -2648,19 +2650,19 @@ def api_orders_update_status():
         return jsonify({"ok": True, "note": "no_change"})
     
     if field == 'qabyl' and estimated_time is not None:
-        cur.execute("UPDATE orders SET qabyl = ?, estimated_time = ? WHERE id = ?", (db_value, estimated_time, order_id))
+        cur.execute(f"UPDATE orders SET qabyl = {qm()}, estimated_time = {qm()} WHERE id = {qm()}", (db_value, estimated_time, order_id))
     else:
-        cur.execute(f"UPDATE orders SET {field} = ? WHERE id = ?", (db_value, order_id))
+        cur.execute(f"UPDATE orders SET {field} = {qm()} WHERE id = {qm()}", (db_value, order_id))
 
     # ТАФТИШИ УМУМӢ: Агар заказ пурра хат зада шуда бошад, онро ҳамчун "Иҷрошуда" қайд мекунем
     # Ин тафтиш бояд ҳар вақте ки хӯрок, маблағ ё статус тағйир меёбад, иҷро шавад
     if field in ('food', 'refund', 'out_of_stock'):
-        cur.execute("SELECT refund, price, out_of_stock FROM orders WHERE id = ?", (order_id,))
+        cur.execute(f"SELECT refund, price, out_of_stock FROM orders WHERE id = {qm()}", (order_id,))
         rv, ps, oos = cur.fetchone()
         try: pc = float("".join(c for c in str(ps).replace(',', '.') if c.isdigit() or c == '.'))
         except: pc = 0.0
         if oos and pc > 0 and rv >= pc:
-            cur.execute("UPDATE orders SET qabyl = 1, omoda = 1 WHERE id = ?", (order_id,))
+            cur.execute(f"UPDATE orders SET qabyl = 1, omoda = 1 WHERE id = {qm()}", (order_id,))
 
     # НАВСОЗИИ ТАЪРИХИ ДАРОМАД ВА АРХИВ
     if field == 'refund':
@@ -2669,19 +2671,19 @@ def api_orders_update_status():
             # 1. Кам кардани маблағ аз таърихи даромад (График)
             # Мо маблағи манфиро илова мекунем, то суммаи умумии он рӯз дуруст шавад
             order_date = created_at[:10] if created_at else datetime.now().strftime("%Y-%m-%d")
-            cur.execute("INSERT INTO revenue_history (amount, day, customer_id) VALUES (?, ?, ?)", (-diff, order_date, customer_id))
+            cur.execute(f"INSERT INTO revenue_history (amount, day, customer_id) VALUES ({qm()}, {qm()}, {qm()})", (-diff, order_date, customer_id))
             
             # 2. Навсозии сумма дар архиви заказҳо (Full History)
             try:
                 p_clean = "".join(c for c in str(orig_price_str).replace(',', '.') if c.isdigit() or c == '.')
                 orig_p = float(p_clean) if p_clean else 0.0
                 new_display_price = str(round(orig_p - db_value, 2))
-                cur.execute("UPDATE full_order_history SET price = ? WHERE customer_id = ? AND created = ?", (new_display_price, customer_id, created_at))
+                cur.execute(f"UPDATE full_order_history SET price = {qm()} WHERE customer_id = {qm()} AND created = {qm()}", (new_display_price, customer_id, created_at))
             except: pass
 
     if field == 'food':
         # Навсозии рӯйхати хӯрокҳо дар архив, агар ягон чиз хат зада шуда бошад
-        cur.execute("UPDATE full_order_history SET food = ? WHERE customer_id = ? AND created = ?", (db_value, customer_id, created_at))
+        cur.execute(f"UPDATE full_order_history SET food = {qm()} WHERE customer_id = {qm()} AND created = {qm()}", (db_value, customer_id, created_at))
 
     conn.commit()
     updated = cur.rowcount > 0
@@ -2689,13 +2691,13 @@ def api_orders_update_status():
 
     # Фиристодани Push агар статус "ҳа" (1) шавад
     if updated and db_value == 1:
-        conn = sqlite3.connect(DB_PATH, timeout=20); cur = conn.cursor()
-        cur.execute("SELECT subscription_json FROM push_subscriptions WHERE customer_id = ?", (customer_id,))
+        conn = get_db_connection(); cur = conn.cursor()
+        cur.execute(f"SELECT subscription_json FROM push_subscriptions WHERE customer_id = {qm()}", (customer_id,))
         sub_row = cur.fetchone()
         if sub_row:
             sub_info = json.loads(sub_row[0])
             # Гирифтани маблағ ва рефунд барои муқоиса
-            cur.execute("SELECT refund, price FROM orders WHERE id = ?", (order_id,))
+            cur.execute(f"SELECT refund, price FROM orders WHERE id = {qm()}", (order_id,))
             ref_val, orig_price_str = cur.fetchone()
             
             # Тоза кардани нархи аслӣ барои муқоиса
@@ -2761,20 +2763,21 @@ def api_orders_update_status():
 
 @app.route("/api/orders/clear-all", methods=["POST"])
 def api_orders_clear_all():
-    conn = sqlite3.connect(DB_PATH, timeout=20)
+    conn = get_db_connection()
     cur = conn.cursor()
     cur.execute("DELETE FROM orders")
-    # Ин фармон рақамгузории (ID)-ро аз нав ба 1 мегардонад
-    cur.execute("DELETE FROM sqlite_sequence WHERE name='orders'")
+    if not DATABASE_URL:
+        # Ин фармон рақамгузории (ID)-ро аз нав ба 1 мегардонад
+        cur.execute("DELETE FROM sqlite_sequence WHERE name='orders'")
     conn.commit()
     conn.close()
     return jsonify({"ok": True})
 
 @app.route("/api/orders/delete/<int:order_id>", methods=["DELETE"])
 def api_order_delete_db(order_id):
-    conn = sqlite3.connect(DB_PATH, timeout=20)
+    conn = get_db_connection()
     cur = conn.cursor()
-    cur.execute("DELETE FROM orders WHERE id = ?", (order_id,))
+    cur.execute(f"DELETE FROM orders WHERE id = {qm()}", (order_id,))
     conn.commit()
     ok = cur.rowcount > 0
     conn.close()
@@ -2786,10 +2789,10 @@ def api_orders_customer_status():
     if not customer_id:
         return jsonify({"ok": True, "orders": []})
 
-    conn = sqlite3.connect(DB_PATH, timeout=20)
+    conn = get_db_connection()
     cur = conn.cursor()
     cur.execute(
-        "SELECT id, food, qabyl, omoda, created, estimated_time FROM orders WHERE customer_id = ? ORDER BY id ASC",
+        f"SELECT id, food, qabyl, omoda, created, estimated_time FROM orders WHERE customer_id = {qm()} ORDER BY id ASC",
         (customer_id,),
     )
     rows = cur.fetchall()
@@ -2815,7 +2818,7 @@ def api_orders_customer_status():
 # FOOD MANAGEMENT API ROUTES
 @app.route("/api/foods/list", methods=["GET"])
 def api_foods_list():
-    conn = sqlite3.connect(DB_PATH, timeout=20)
+    conn = get_db_connection()
     cur = conn.cursor()
     cur.execute("SELECT id, name, price, category, image_url, description, subcategory FROM foods ORDER BY category, subcategory, name ASC")
     rows = cur.fetchall()
@@ -2867,11 +2870,11 @@ def api_foods_add():
     if not name or not price:
         return jsonify({"ok": False, "error": "missing_fields"}), 400
 
-    conn = sqlite3.connect(DB_PATH, timeout=20)
+    conn = get_db_connection()
     cur = conn.cursor()
     try:
         cur.execute(
-            "INSERT INTO foods (name, price, category, subcategory, image_url, description, created) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            f"INSERT INTO foods (name, price, category, subcategory, image_url, description, created) VALUES ({qm()},{qm()},{qm()},{qm()},{qm()},{qm()},{qm()})",
             (name, price, category, subcategory, image_url, description, datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
         )
         food_id = cur.lastrowid
@@ -2921,11 +2924,11 @@ def api_foods_update(food_id):
     if not name or not price:
         return jsonify({"ok": False, "error": "missing_fields"}), 400
 
-    conn = sqlite3.connect(DB_PATH, timeout=20)
+    conn = get_db_connection()
     cur = conn.cursor()
     try:
         cur.execute(
-            "UPDATE foods SET name = ?, price = ?, category = ?, subcategory = ?, image_url = ?, description = ? WHERE id = ?",
+            f"UPDATE foods SET name = {qm()}, price = {qm()}, category = {qm()}, subcategory = {qm()}, image_url = {qm()}, description = {qm()} WHERE id = {qm()}",
             (name, price, category, subcategory, image_url, description, food_id),
         )
         conn.commit()
@@ -2941,9 +2944,9 @@ def api_foods_delete(food_id):
     if request.method == "OPTIONS":
         return ("", 204)
 
-    conn = sqlite3.connect(DB_PATH, timeout=20)
+    conn = get_db_connection()
     cur = conn.cursor()
-    cur.execute("DELETE FROM foods WHERE id = ?", (food_id,))
+    cur.execute(f"DELETE FROM foods WHERE id = {qm()}", (food_id,))
     conn.commit()
     deleted = cur.rowcount > 0
     conn.close()
@@ -2951,7 +2954,7 @@ def api_foods_delete(food_id):
 
 @app.route("/api/aktsii/list", methods=["GET"])
 def api_aktsii_list():
-    conn = sqlite3.connect(DB_PATH, timeout=20); cur = conn.cursor()
+    conn = get_db_connection(); cur = conn.cursor()
     cur.execute("SELECT id, title, price, description, image_url, created FROM aktsii ORDER BY id DESC")
     rows = cur.fetchall(); conn.close()
     return jsonify({"ok": True, "aktsii": [{"id": r[0], "title": r[1], "price": r[2], "description": r[3], "image_url": r[4], "created": r[5]} for r in rows]})
@@ -2974,16 +2977,16 @@ def api_aktsii_add():
             file.save(os.path.join(UPLOAD_FOLDER, filename))
             image_url = filename
 
-    conn = sqlite3.connect(DB_PATH, timeout=20); cur = conn.cursor()
-    cur.execute("INSERT INTO aktsii (title, price, description, image_url, created) VALUES (?, ?, ?, ?, ?)",
+    conn = get_db_connection(); cur = conn.cursor()
+    cur.execute(f"INSERT INTO aktsii (title, price, description, image_url, created) VALUES ({qm()}, {qm()}, {qm()}, {qm()}, {qm()})",
                 (title, price, description, image_url, datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
     conn.commit(); conn.close()
     return jsonify({"ok": True})
 
 @app.route("/api/aktsii/delete/<int:aktsii_id>", methods=["DELETE"])
 def api_aktsii_delete(aktsii_id):
-    conn = sqlite3.connect(DB_PATH, timeout=20); cur = conn.cursor()
-    cur.execute("DELETE FROM aktsii WHERE id = ?", (aktsii_id,))
+    conn = get_db_connection(); cur = conn.cursor()
+    cur.execute(f"DELETE FROM aktsii WHERE id = {qm()}", (aktsii_id,))
     conn.commit(); conn.close()
     return jsonify({"ok": True})
 
@@ -3003,10 +3006,11 @@ def api_full_order_history():
 
 @app.route("/api/orders/clear-full-history", methods=["POST"])
 def api_clear_full_history():
-    conn = sqlite3.connect(DB_PATH, timeout=20)
+    conn = get_db_connection()
     cur = conn.cursor()
     cur.execute("DELETE FROM full_order_history")
-    cur.execute("DELETE FROM sqlite_sequence WHERE name='full_order_history'")
+    if not DATABASE_URL:
+        cur.execute("DELETE FROM sqlite_sequence WHERE name='full_order_history'")
     conn.commit()
     conn.close()
     return jsonify({"ok": True})
@@ -3072,9 +3076,9 @@ def api_popular_foods():
 
 @app.route("/api/customers/delete/<string:customer_id>", methods=["DELETE"])
 def api_customers_delete(customer_id):
-    conn = sqlite3.connect(DB_PATH, timeout=20)
+    conn = get_db_connection()
     cur = conn.cursor()
-    cur.execute("DELETE FROM customers WHERE customer_id = ?", (customer_id,))
+    cur.execute(f"DELETE FROM customers WHERE customer_id = {qm()}", (customer_id,))
     conn.commit()
     ok = cur.rowcount > 0
     conn.close()
@@ -3082,18 +3086,19 @@ def api_customers_delete(customer_id):
 
 @app.route("/api/stats/clear-history", methods=["POST"])
 def api_stats_clear_history():
-    conn = sqlite3.connect(DB_PATH, timeout=20)
+    conn = get_db_connection()
     cur = conn.cursor()
     cur.execute("DELETE FROM revenue_history")
-    # Ин фармон рақамгузории (ID)-ро аз нав ба 1 мегардонад
-    cur.execute("DELETE FROM sqlite_sequence WHERE name='revenue_history'")
+    if not DATABASE_URL:
+        # Ин фармон рақамгузории (ID)-ро аз нав ба 1 мегардонад
+        cur.execute("DELETE FROM sqlite_sequence WHERE name='revenue_history'")
     conn.commit()
     conn.close()
     return jsonify({"ok": True})
 
 @app.route("/api/customers/list", methods=["GET"])
 def api_customers_list():
-    conn = sqlite3.connect(DB_PATH, timeout=20)
+    conn = get_db_connection()
     cur = conn.cursor()
     cur.execute("SELECT full_name, customer_id, created FROM customers ORDER BY id DESC")
     rows = cur.fetchall(); conn.close()
@@ -3102,15 +3107,16 @@ def api_customers_list():
 @app.route("/api/settings/get", methods=["GET"])
 def api_get_setting():
     key = request.args.get("key")
-    conn = sqlite3.connect(DB_PATH, timeout=20); cur = conn.cursor()
-    cur.execute("SELECT value FROM settings WHERE key = ?", (key,)); r = cur.fetchone(); conn.close()
+    conn = get_db_connection(); cur = conn.cursor()
+    cur.execute(f"SELECT value FROM settings WHERE key = {qm()}", (key,)); r = cur.fetchone(); conn.close()
     return jsonify({"ok": True, "val": r[0] if r else ""})
 
 @app.route("/api/settings/set", methods=["POST"])
 def api_set_setting():
     data = request.get_json()
-    conn = sqlite3.connect(DB_PATH, timeout=20); cur = conn.cursor()
-    cur.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (data['key'], data['val']))
+    conn = get_db_connection(); cur = conn.cursor()
+    upsert_sql = f"INSERT INTO settings (key, value) VALUES ({qm()}, {qm()}) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value" if DATABASE_URL else "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)"
+    cur.execute(upsert_sql, (data['key'], data['val']))
     conn.commit(); conn.close()
     return jsonify({"ok": True})
 
@@ -3119,8 +3125,11 @@ def api_push_subscribe():
     data = request.get_json()
     customer_id = data.get("customer_id")
     sub_json = json.dumps(data.get("subscription"))
-    conn = sqlite3.connect(DB_PATH); cur = conn.cursor()
-    cur.execute("INSERT OR REPLACE INTO push_subscriptions (customer_id, subscription_json) VALUES (?, ?)", (customer_id, sub_json))
+    conn = get_db_connection(); cur = conn.cursor()
+    if DATABASE_URL:
+        cur.execute("INSERT INTO push_subscriptions (customer_id, subscription_json) VALUES (%s, %s) ON CONFLICT (customer_id) DO UPDATE SET subscription_json = EXCLUDED.subscription_json", (customer_id, sub_json))
+    else:
+        cur.execute("INSERT OR REPLACE INTO push_subscriptions (customer_id, subscription_json) VALUES (?, ?)", (customer_id, sub_json))
     conn.commit(); conn.close()
     return jsonify({"ok": True})
 
@@ -3133,9 +3142,12 @@ def api_customers_register():
         return jsonify({"ok": False, "error": "missing_data"}), 400
     created = datetime.now().strftime("%d.%m.%Y %H:%M")
     try:
-        conn = sqlite3.connect(DB_PATH)
+        conn = get_db_connection()
         cur = conn.cursor()
-        cur.execute("INSERT OR IGNORE INTO customers (full_name, customer_id, created) VALUES (?, ?, ?)", (full_name, customer_id, created))
+        if DATABASE_URL:
+            cur.execute("INSERT INTO customers (full_name, customer_id, created) VALUES (%s, %s, %s) ON CONFLICT (customer_id) DO NOTHING", (full_name, customer_id, created))
+        else:
+            cur.execute("INSERT OR IGNORE INTO customers (full_name, customer_id, created) VALUES (?, ?, ?)", (full_name, customer_id, created))
         conn.commit(); conn.close()
         return jsonify({"ok": True})
     except Exception as e:
@@ -3186,11 +3198,12 @@ def api_reviews_add():
 @app.route("/api/get-next-payment-phone")
 def api_get_next_phone():
     PAYMENT_PHONE_NUMBERS = ["944975050", "754169090"]
-    conn = sqlite3.connect(DB_PATH); cur = conn.cursor()
-    cur.execute("SELECT value FROM settings WHERE key = 'last_payment_phone_index'")
+    conn = get_db_connection(); cur = conn.cursor()
+    cur.execute(f"SELECT value FROM settings WHERE key = 'last_payment_phone_index'")
     r = cur.fetchone(); last_index = int(r[0]) if r else 0
     next_index = (last_index + 1) % len(PAYMENT_PHONE_NUMBERS)
-    cur.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('last_payment_phone_index', ?)", (str(next_index),))
+    upsert_sql = f"INSERT INTO settings (key, value) VALUES ('last_payment_phone_index', {qm()}) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value" if DATABASE_URL else "INSERT OR REPLACE INTO settings (key, value) VALUES ('last_payment_phone_index', ?)"
+    cur.execute(upsert_sql, (str(next_index),))
     conn.commit(); conn.close()
     return jsonify({"ok": True, "phone": PAYMENT_PHONE_NUMBERS[next_index]})
 

@@ -1,6 +1,7 @@
 import socket
 import sqlite3
 import psycopg2
+import psycopg2.extras
 import json
 import random
 import os
@@ -25,19 +26,30 @@ VAPID_CLAIMS = {"sub": "mailto:admin@tfc-kulob.tj"}
 # Рӯйхати рақамҳо барои гардиш ҳангоми Доставка
 PAYMENT_PHONE_NUMBERS = ["944975050", "754169090"]
 
-DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tfc_admin.db")
 DATABASE_URL = os.environ.get("DATABASE_URL")
+if DATABASE_URL and DATABASE_URL.startswith("postgres://"):
+    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
 
 def get_db_connection():
     if DATABASE_URL:
-        # Пайвастшавӣ ба PostgreSQL (барои Render)
         return psycopg2.connect(DATABASE_URL, sslmode='require')
-    # Пайвастшавӣ ба SQLite (локалӣ)
     return sqlite3.connect(DB_PATH, timeout=20)
 
+def get_cursor(conn):
+    if DATABASE_URL:
+        return conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+    conn.row_factory = sqlite3.Row
+    return conn.cursor()
+
 def qm():
-    # Postgres %s-ро истифода мебарад, SQLite ?-ро
     return "%s" if DATABASE_URL else "?"
+
+def to_dict(row, cursor):
+    if not row: return None
+    if hasattr(row, 'keys'): # sqlite3.Row
+        return dict(row)
+    # Postgres or fallback
+    return {desc[0]: row[i] for i, desc in enumerate(cursor.description)}
 
 def get_setting(key, default_value=None):
     """Гирифтани танзимот аз база"""
@@ -67,19 +79,15 @@ def get_next_payment_phone_for_rotation():
     set_setting("last_payment_phone_index", str(next_index))
     return PAYMENT_PHONE_NUMBERS[next_index]
 
+# Rohi mutlaq baroi muvofiqat bo bilol.py
+DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tfc_admin.db")
+
 def init_db() -> None:
     conn = get_db_connection()
     cur = conn.cursor()
-    
+
     id_type = "SERIAL PRIMARY KEY" if DATABASE_URL else "INTEGER PRIMARY KEY AUTOINCREMENT"
-
-    def col_exists(table, col):
-        if DATABASE_URL:
-            cur.execute("SELECT column_name FROM information_schema.columns WHERE table_name=%s AND column_name=%s", (table, col))
-            return cur.fetchone() is not None
-        cur.execute(f"PRAGMA table_info({table})")
-        return any(r[1] == col for r in cur.fetchall())
-
+    
     # 1. Аввал ҷадвалҳоро месозем
     cur.execute(
         f"""
@@ -106,8 +114,15 @@ def init_db() -> None:
     cur.execute(f"CREATE TABLE IF NOT EXISTS push_subscriptions (id {id_type}, customer_id TEXT UNIQUE, subscription_json TEXT)")
     cur.execute(f"CREATE TABLE IF NOT EXISTS aktsii (id {id_type}, title TEXT NOT NULL, price TEXT NOT NULL DEFAULT '', description TEXT, image_url TEXT, created TEXT NOT NULL)")
     
+    def col_exists(table, col):
+        if DATABASE_URL:
+            cur.execute("SELECT column_name FROM information_schema.columns WHERE table_name=%s AND column_name=%s", (table, col))
+            return cur.fetchone() is not None
+        cur.execute(f"PRAGMA table_info({table})")
+        return any(r[1] == col for r in cur.fetchall())
+
     if not col_exists("aktsii", "price"):
-        cur.execute("ALTER TABLE aktsii ADD COLUMN price TEXT NOT NULL DEFAULT ''")
+        cur.execute(f"ALTER TABLE aktsii ADD COLUMN price TEXT {'NOT NULL DEFAULT \'\'' if not DATABASE_URL else ''}")
 
     cur.execute(f"CREATE TABLE IF NOT EXISTS customers (id {id_type}, full_name TEXT NOT NULL, customer_id TEXT UNIQUE NOT NULL, created TEXT NOT NULL)")
 
@@ -143,7 +158,7 @@ def init_db() -> None:
     )
 
     # 2. Баъд сутунҳоро тафтиш ва илова мекунем
-    order_fields = [
+    fields = [
         ("customer_id", "TEXT NOT NULL DEFAULT ''"), ("qabyl", "INTEGER NOT NULL DEFAULT 0"),
         ("omoda", "INTEGER NOT NULL DEFAULT 0"), ("phone", "TEXT NOT NULL DEFAULT ''"),
         ("delivery_type", "TEXT NOT NULL DEFAULT ''"), ("dostavka", "INTEGER NOT NULL DEFAULT 0"),
@@ -152,7 +167,7 @@ def init_db() -> None:
         ("tip", "TEXT NOT NULL DEFAULT ''"), ("refund", "REAL DEFAULT 0"),
         ("estimated_time", "INTEGER DEFAULT 0"), ("payment_method", "TEXT DEFAULT 'online'")
     ]
-    for col, defn in order_fields:
+    for col, defn in fields:
         if not col_exists("orders", col):
             cur.execute(f"ALTER TABLE orders ADD COLUMN {col} {defn}")
 
@@ -160,20 +175,12 @@ def init_db() -> None:
     cur.execute("CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)")
 
     if not col_exists("foods", "description"): cur.execute("ALTER TABLE foods ADD COLUMN description TEXT NOT NULL DEFAULT ''")
-    if not col_exists("foods", "subcategory"):
-        cur.execute("ALTER TABLE foods ADD COLUMN subcategory TEXT NOT NULL DEFAULT ''")
-    
+    if not col_exists("foods", "subcategory"): cur.execute("ALTER TABLE foods ADD COLUMN subcategory TEXT NOT NULL DEFAULT ''")
     if not col_exists("reviews", "image_url"): cur.execute("ALTER TABLE reviews ADD COLUMN image_url TEXT")
-
     if not col_exists("full_order_history", "tip"): cur.execute("ALTER TABLE full_order_history ADD COLUMN tip TEXT NOT NULL DEFAULT ''")
-    if not col_exists("full_order_history", "payment_method"):
-        cur.execute("ALTER TABLE full_order_history ADD COLUMN payment_method TEXT DEFAULT 'online'")
+    if not col_exists("full_order_history", "payment_method"): cur.execute("ALTER TABLE full_order_history ADD COLUMN payment_method TEXT DEFAULT 'online'")
 
     # 3. Илова кардани додаҳои намунавӣ (Sync with bilol.py)
-    # Тағйирот: Истифодаи ON CONFLICT барои PostgreSQL
-    upsert_sql = f"INSERT INTO foods (name, price, category, subcategory, image_url, created) VALUES ({qm()},{qm()},{qm()},{qm()},{qm()},{qm()}) ON CONFLICT (name) DO NOTHING" if DATABASE_URL else \
-                 "INSERT OR IGNORE INTO foods (name, price, category, subcategory, image_url, created) VALUES (?, ?, ?, ?, ?, ?)"
-
     sample_foods = [
         # ЛЕТНЕЕ МЕНЮ
         ("СМУЗИ БАНАН + КИВИ", "26", "Летнее меню", "d1.png", "Смузи", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
@@ -349,19 +356,16 @@ def init_db() -> None:
             # Агар дарозии элемент 6 бошад, пас индекси 4 subcategory аст
             sub = f[4] if len(f) == 6 else ""
             created = f[-1]
+
+            upsert_sql = f"INSERT INTO foods (name, price, category, subcategory, image_url, created) VALUES ({qm()},{qm()},{qm()},{qm()},{qm()},{qm()}) ON CONFLICT (name) DO NOTHING" if DATABASE_URL else \
+                         f"INSERT OR IGNORE INTO foods (name, price, category, subcategory, image_url, created) VALUES (?, ?, ?, ?, ?, ?)"
             
-            cur.execute("""
-                INSERT OR IGNORE INTO foods (name, price, category, subcategory, image_url, created)
-                VALUES (?, ?, ?, ?, ?, ?)
-            """, (name, price, cat, sub, img, created))
+            cur.execute(upsert_sql, (name, price, cat, sub, img, created))
 
     # Тоза кардани расмҳои гумшуда барои пешгирӣ аз хатогии 404
-    cur.execute("UPDATE foods SET image_url = '' WHERE image_url IN ('d9.png', 'd10.png', 'd11.png')")
+    cur.execute(f"UPDATE foods SET image_url = '' WHERE image_url IN ('d9.png', 'd10.png', 'd11.png')")
 
     conn.commit()
-    # Ensure delivery_type is never empty for existing orders
-    # This helps with correct push notifications for pickup orders
-    cur.execute(f"UPDATE orders SET delivery_type = 'pickup' WHERE delivery_type = '' OR delivery_type IS NULL")
     conn.close()
 
 init_db()
@@ -2407,28 +2411,31 @@ HTML_TEMPLATE = r"""
     </main>
     <script>
         document.addEventListener("DOMContentLoaded", () => {
-            const session = localStorage.getItem("tfc_session"); // Changed from tfc_session to tfc_customer_profile
-            const profile = localStorage.getItem("tfc_customer_profile"); // Changed from tfc_session to tfc_customer_profile
-            
-            if (session && profile) { // Check both session and profile
-                showApp(); // If logged in, show the app
-                // No need to save active section here, showApp will handle it
-                // based on sessionStorage or default to 'menu'
-            } else {
+            if (localStorage.getItem("tfc_session")) showApp();
+            else {
                 const auth = document.getElementById('auth-section');
                 if (auth) auth.classList.remove('hidden');
             }
         });
 
-        function triggerFullScreen() {
+        // Пайваст кардани Fullscreen ба тамоми экран ва экрани боркунӣ
+        async function triggerFullScreen() {
+            // Агар аллакай дар режими пурра бошад, ягон кор намекунем
             if (document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement || document.msFullscreenElement) {
                 cleanFullScreenEvents();
                 return;
             }
+
             const docEl = document.documentElement;
             const requestFs = docEl.requestFullscreen || docEl.mozRequestFullScreen || docEl.webkitRequestFullscreen || docEl.msRequestFullscreen;
+
             if (requestFs) {
-                requestFs.call(docEl).then(cleanFullScreenEvents).catch(() => {});
+                try {
+                    await requestFs.call(docEl);
+                    cleanFullScreenEvents();
+                } catch (err) {
+                    // Игнори хатогӣ, агар браузер иҷозат надиҳад
+                }
             }
         }
 
@@ -2458,13 +2465,13 @@ HTML_TEMPLATE = r"""
                 return;
             }
 
-            // Тафтиши ҳарфҳои англисӣ
+            // 2. Тафтиши ҳарфҳои англисӣ (танҳо кириллица иҷозат аст)
             if (/[a-zA-Z]/.test(fullName)) {
                 alert("Лутфан танҳо бо ҳарфҳои кириллӣ (русӣ/тоҷикӣ) нависед. Ҳарфҳои англисӣ манъ аст."); // Changed error message
                 return;
             }
 
-            // Тафтиши ҳарфи аввали калон
+            // 3. Тафтиши ҳарфи аввали калон ва Caps Lock барои ҳар як калима
             for (const word of words) {
                 if (word.length === 0) continue; // Skip empty strings from split
 
@@ -2480,7 +2487,7 @@ HTML_TEMPLATE = r"""
             }
 
             // МАҲЗ ДАР ҲАМИН ҶО: вақте корбар тугмаро зер мекунад, 
-            // мо Fullscreen-ро фаъол мекунем, то интерфейси браузер гум шавад. (Removed this line as it's already in the code)
+            // мо Fullscreen-ро фаъол мекунем, то интерфейси браузер гум шавад.
             triggerFullScreen();
 
             // Эҷоди профили корбар ва захира дар localStorage
@@ -2490,7 +2497,8 @@ HTML_TEMPLATE = r"""
             localStorage.setItem("tfc_customer_profile", JSON.stringify(profile));
             localStorage.setItem("tfc_session", fullName);
 
-            fetch(adminApiBase() + '/api/customers/register', {
+            // Регистрация пользователя на сервере
+            fetch('/api/customers/register', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ full_name: fullName, customer_id: generatedId })
@@ -2556,7 +2564,7 @@ HTML_TEMPLATE = r"""
                 btn.textContent = "Отправка...";
 
                 try {
-                    const res = await fetch(adminApiBase() + '/api/auth/send-code', {
+                    const res = await fetch('/api/auth/send-code', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ phone })
@@ -2591,7 +2599,7 @@ HTML_TEMPLATE = r"""
                 if (code.length !== 4) return alert("Введите 4 цифры!");
 
                 try {
-                    const res = await fetch(adminApiBase() + '/api/auth/verify-code', {
+                    const res = await fetch('/api/auth/verify-code', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ phone, code })
@@ -2748,7 +2756,7 @@ HTML_TEMPLATE = r"""
                     });
                 }
 
-                await fetch(adminApiBase() + '/api/push/subscribe', {
+                await fetch('/api/push/subscribe', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ customer_id: customerId, subscription: subscription })
@@ -2769,6 +2777,7 @@ HTML_TEMPLATE = r"""
     </script>
     <script>
         function animateSection(id) {
+            // Ensure the element exists before trying to animate
             const el = document.getElementById(id);
             if (!el) {
                 console.warn(`Element with ID '${id}' not found for animation.`);
@@ -2797,8 +2806,9 @@ HTML_TEMPLATE = r"""
                 // Пинҳон кардани хӯрокҳо то он даме, ки зергурӯҳ интихоб шавад
                 productGrid.querySelectorAll('.product-card').forEach(c => c.style.display = 'none');
 
-                animateSection('menu-section');
+                if(typeof animateSection === 'function') animateSection('menu-section');
                 setTopControlsVisible(false);
+                // Танҳо пас аз иваз шудани контент ба боло меравем
                 window.scrollTo(0, 0);
                 document.documentElement.scrollTop = 0;
                 document.body.scrollTop = 0;
@@ -2838,6 +2848,7 @@ HTML_TEMPLATE = r"""
                     card.style.display = show ? 'block' : 'none';
                 });
 
+                // Scroll to top танҳо вақте ки хӯрокҳо иваз шуданд
                 window.scrollTo(0, 0);
                 document.documentElement.scrollTop = 0;
                 document.body.scrollTop = 0;
@@ -2858,15 +2869,14 @@ HTML_TEMPLATE = r"""
             document.getElementById('menu').style.display = 'block';
             document.getElementById('menu-subcategories').style.display = 'none';
             document.getElementById('intro-section').style.display = 'flex';
-            animateSection('menu');
-            animateSection('intro-section');
+            if(typeof animateSection === 'function') animateSection('menu');
+            if(typeof animateSection === 'function') animateSection('intro-section');
             updateTopControlsByScroll();
             window.scrollTo(0, 0);
             document.documentElement.scrollTop = 0;
             document.body.scrollTop = 0;
             }, 350);
         }
-
         function showPizza() {
             setTimeout(() => {
             document.getElementById('intro-section').style.display = 'none';
@@ -2884,7 +2894,7 @@ HTML_TEMPLATE = r"""
             pizzaSection.querySelector('h2').innerHTML = 'ПИЦЦА';
             productGrid.querySelectorAll('.product-card').forEach(c => c.style.display = 'none');
 
-            animateSection('pizza-section');
+            if(typeof animateSection === 'function') animateSection('pizza-section');
             setTopControlsVisible(false);
             window.scrollTo(0, 0);
             document.documentElement.scrollTop = 0;
@@ -2907,14 +2917,7 @@ HTML_TEMPLATE = r"""
                 const cards = grid.querySelectorAll('.product-card');
                 cards.forEach(card => {
                     const cardSub = card.getAttribute('data-subcategory') || '';
-                    const name = card.getAttribute('data-name').toUpperCase();
-                    let show = false;
-                    if (cardSub === subCategory) show = true;
-                    else if (!cardSub) {
-                        if (subCategory === 'Пицца') show = name.includes('ПИЦЦА');
-                        if (subCategory === 'Хачапури') show = name.includes('ХАЧАПУРИ');
-                    }
-                    card.style.display = show ? 'block' : 'none';
+                    card.style.display = (cardSub === subCategory) ? 'block' : 'none';
                 });
 
                 window.scrollTo(0, 0);
@@ -2940,81 +2943,6 @@ HTML_TEMPLATE = r"""
             document.body.scrollTop = 0;
             }, 350);
         }
-
-        function showSushi() {
-            setTimeout(() => {
-                document.getElementById('intro-section').style.display = 'none';
-                document.getElementById('menu').style.display = 'none';
-                const sushiSection = document.getElementById('sushi-section');
-                const subCategories = document.getElementById('sushi-subcategories');
-                const productGrid = document.getElementById('sushi-filtered-product-grid');
-
-                sushiSection.style.display = 'block';
-                subCategories.style.display = 'grid';
-                document.getElementById('sushi-category-back-btn').style.display = 'none';
-                document.getElementById('sushi-main-back-btn').style.display = 'inline-flex';
-
-                sushiSection.querySelector('h2').innerHTML = 'СУШИ И РОЛЛЫ';
-                productGrid.querySelectorAll('.product-card').forEach(c => c.style.display = 'none');
-
-                animateSection('sushi-section');
-                setTopControlsVisible(false);
-                window.scrollTo(0, 0);
-            }, 350);
-        }
-
-        function filterSushi(subCategory) {
-            const sushiSection = document.getElementById('sushi-section');
-            const grid = document.getElementById('sushi-filtered-product-grid');
-            const title = sushiSection.querySelector('h2');
-
-            setTimeout(() => {
-                document.getElementById('sushi-subcategories').style.display = 'none';
-                document.getElementById('sushi-main-back-btn').style.display = 'none';
-                document.getElementById('sushi-category-back-btn').style.display = 'inline-flex';
-
-                title.innerHTML = subCategory.toUpperCase();
-
-                const cards = grid.querySelectorAll('.product-card');
-                cards.forEach(card => {
-                    const cardSub = card.getAttribute('data-subcategory') || '';
-                    const name = card.getAttribute('data-name').toUpperCase();
-                    let show = false;
-                    
-                    if (cardSub === subCategory) {
-                        show = true;
-                    } else if (!cardSub) {
-                        if (subCategory === 'Суши') {
-                            show = name.includes('СУШИ') && !(name.includes('РОЛЛ') || name.includes('МАКИ') || name.includes('КАЛИФОРНИЯ') || name.includes('СЕТ') || name.includes('ТЕМПУРА'));
-                        } else if (subCategory === 'Роллы') {
-                            show = name.includes('РОЛЛ') || name.includes('МАКИ') || name.includes('КАЛИФОРНИЯ') || name.includes('ТЕМПУРА') || name.includes('СЕТ') || (name.includes('ЗАПЕЧЕН') && !name.includes('СУШИ'));
-                        }
-                    }
-                    card.style.display = show ? 'block' : 'none';
-                });
-
-                window.scrollTo(0, 0);
-                [title, grid].forEach(el => {
-                    el.classList.remove('page-transition');
-                    void el.offsetWidth;
-                    el.classList.add('page-transition');
-                });
-            }, 250);
-        }
-
-        function hideSushi() {
-            setTimeout(() => {
-                stopAllVideos();
-                document.getElementById('sushi-section').style.display = 'none';
-                document.getElementById('menu').style.display = 'block';
-                document.getElementById('intro-section').style.display = 'flex';
-                animateSection('menu');
-                animateSection('intro-section');
-                updateTopControlsByScroll();
-                window.scrollTo(0, 0);
-            }, 350);
-        }
-
         function showFastFood() {
             setTimeout(() => {
             document.getElementById('intro-section').style.display = 'none';
@@ -3357,7 +3285,7 @@ HTML_TEMPLATE = r"""
         async function deleteReview(id) {
             const code = prompt("Введите код для удаления:");
             if (code === "anis1234") {
-                const res = await fetch(adminApiBase() + `/api/reviews/delete/${id}`, { method: 'POST' });
+                const res = await fetch(`/api/reviews/delete/${id}`, { method: 'POST' });
                 const data = await res.json();
                 if (data.ok) {
                     location.reload();
@@ -3389,32 +3317,62 @@ HTML_TEMPLATE = r"""
         }
 
         function showNotifications() {
-            saveActiveSection('notifications-section');
             setTimeout(() => {
-            document.getElementById('intro-section').style.display = 'none'; document.getElementById('menu').style.display = 'none'; document.getElementById('notifications-section').style.display = 'block';
+            document.getElementById('intro-section').style.display = 'none';
+            document.getElementById('menu').style.display = 'none';
+            document.getElementById('notifications-section').style.display = 'block';
             renderNotificationsList();
-            notificationsHistory.forEach(n => { n.isNew = false; }); localStorage.setItem("tfc_notifications_history", JSON.stringify(notificationsHistory));
-            unreadNotifCount = 0; localStorage.setItem("tfc_unread_notif_count", unreadNotifCount); updateNotifBadge();
-            animateSection('notifications-section'); setTopControlsVisible(false); window.scrollTo(0, 0); document.documentElement.scrollTop = 0; document.body.scrollTop = 0;
+            // Ҳангоми кушодани хабарҳо, ҳисобкунакро тоза мекунем
+            notificationsHistory.forEach(n => { n.isNew = false; });
+            localStorage.setItem("tfc_notifications_history", JSON.stringify(notificationsHistory));
+
+            unreadNotifCount = 0;
+            localStorage.setItem("tfc_unread_notif_count", unreadNotifCount);
+            updateNotifBadge();
+            if(typeof animateSection === 'function') animateSection('notifications-section');
+            setTopControlsVisible(false);
+            window.scrollTo(0, 0);
+            document.documentElement.scrollTop = 0;
+            document.body.scrollTop = 0;
             }, 350);
         }
-
         function hideNotifications() {
-            saveActiveSection('menu');
             setTimeout(() => {
-            document.getElementById('notifications-section').style.display = 'none'; document.getElementById('menu').style.display = 'block'; document.getElementById('intro-section').style.display = 'flex';
-            animateSection('menu'); animateSection('intro-section'); updateTopControlsByScroll(); window.scrollTo(0, 0); document.documentElement.scrollTop = 0; document.body.scrollTop = 0;
+            document.getElementById('notifications-section').style.display = 'none';
+            document.getElementById('menu').style.display = 'block';
+            document.getElementById('intro-section').style.display = 'flex';
+            animateSection('menu');
+            animateSection('intro-section');
+            updateTopControlsByScroll();
+            window.scrollTo(0, 0);
+            document.documentElement.scrollTop = 0;
+            document.body.scrollTop = 0;
             }, 350);
         }
 
+        // New Sushi Subcategory Logic
         function showSushi() {
-            saveActiveSection('sushi-section');
             setTimeout(() => {
-                document.getElementById('intro-section').style.display = 'none'; document.getElementById('menu').style.display = 'none';
-                const sushiSection = document.getElementById('sushi-section'); const subCategories = document.getElementById('sushi-subcategories'); const productGrid = document.getElementById('sushi-filtered-product-grid');
-                sushiSection.style.display = 'block'; subCategories.style.display = 'grid'; document.getElementById('sushi-category-back-btn').style.display = 'none'; document.getElementById('sushi-main-back-btn').style.display = 'inline-flex';
-                sushiSection.querySelector('h2').innerHTML = 'СУШИ И РОЛЛЫ'; productGrid.querySelectorAll('.product-card').forEach(c => c.style.display = 'none');
-                animateSection('sushi-section'); setTopControlsVisible(false); window.scrollTo(0, 0); document.documentElement.scrollTop = 0; document.body.scrollTop = 0;
+                document.getElementById('intro-section').style.display = 'none';
+                document.getElementById('menu').style.display = 'none';
+                const sushiSection = document.getElementById('sushi-section');
+                const subCategories = document.getElementById('sushi-subcategories');
+                const productGrid = document.getElementById('sushi-filtered-product-grid');
+
+                sushiSection.style.display = 'block';
+                subCategories.style.display = 'grid'; // Show subcategory cards
+                document.getElementById('sushi-category-back-btn').style.display = 'none'; // Hide sub-back
+                document.getElementById('sushi-main-back-btn').style.display = 'inline-flex'; // Show main-back
+
+                sushiSection.querySelector('h2').innerHTML = 'СУШИ И РОЛЛЫ'; // Reset title
+                // Пинҳон кардани хӯрокҳо то он даме, ки зергурӯҳ интихоб шавад
+                productGrid.querySelectorAll('.product-card').forEach(c => c.style.display = 'none');
+
+                if(typeof animateSection === 'function') animateSection('sushi-section');
+                setTopControlsVisible(false);
+                window.scrollTo(0, 0);
+                document.documentElement.scrollTop = 0;
+                document.body.scrollTop = 0;
             }, 350);
         }
 
@@ -3461,12 +3419,20 @@ HTML_TEMPLATE = r"""
         }
 
         function hideSushi() {
-            saveActiveSection('menu');
             setTimeout(() => {
-                stopAllVideos(); document.getElementById('sushi-section').style.display = 'none'; document.getElementById('menu').style.display = 'block'; document.getElementById('intro-section').style.display = 'flex';
-                animateSection('menu'); animateSection('intro-section'); updateTopControlsByScroll(); window.scrollTo(0, 0); document.documentElement.scrollTop = 0; document.body.scrollTop = 0;
+                stopAllVideos();
+                document.getElementById('sushi-section').style.display = 'none';
+                document.getElementById('menu').style.display = 'block';
+                document.getElementById('intro-section').style.display = 'flex';
+                animateSection('menu');
+                animateSection('intro-section');
+                updateTopControlsByScroll();
+                window.scrollTo(0, 0);
+                document.documentElement.scrollTop = 0;
+                document.body.scrollTop = 0;
             }, 350);
         }
+
         function clearNotifications() {
             document.getElementById('notif-clear-modal-overlay').classList.add('active');
         }
@@ -3513,7 +3479,7 @@ HTML_TEMPLATE = r"""
         window.addEventListener("scroll", updateTopControlsByScroll);
 
         function adminApiBase() {
-            return "https://tfc-admin-panel.onrender.com";
+            return "";
         }
 
         let selectedOrderPayload = null;
@@ -4098,7 +4064,7 @@ HTML_TEMPLATE = r"""
 
             document.getElementById('btn-pickup').onclick = () => { 
                 // Гирифтани рақами навбатӣ барои Самовывоз (Гардиш)
-                fetch(adminApiBase() + '/api/get-next-payment-phone')
+                fetch('/api/get-next-payment-phone')
                     .then(r => r.json())
                     .then(data => {
                         overlay.remove(); 
@@ -4344,7 +4310,7 @@ HTML_TEMPLATE = r"""
 
 @app.route('/admin')
 def admin_page():
-    return redirect("https://tfc-admin-panel.onrender.com/")
+    return render_template_string(ADMIN_HTML)
 
 @app.route('/sw.js')
 def serve_sw():
@@ -4373,7 +4339,7 @@ def api_reviews_add():
 
     created = datetime.now().strftime("%d.%m.%Y %H:%M")
     conn = get_db_connection(); cur = conn.cursor()
-    cur.execute(f"INSERT INTO reviews (name, text, stars, image_url, created) VALUES ({qm()},{qm()},{qm()},{qm()},{qm()})", (name, text, stars, image_url, created))
+    cur.execute(f"INSERT INTO reviews (name, text, stars, image_url, created) VALUES ({qm()}, {qm()}, {qm()}, {qm()}, {qm()})", (name, text, stars, image_url, created))
     conn.commit(); conn.close()
     return jsonify({"ok": True})
 
@@ -4409,7 +4375,10 @@ def api_customers_register():
     try:
         conn = get_db_connection()
         cur = conn.cursor()
-        cur.execute(f"INSERT INTO customers (full_name, customer_id, created) VALUES ({qm()},{qm()},{qm()}) ON CONFLICT (customer_id) DO NOTHING", 
+        if DATABASE_URL:
+            cur.execute("INSERT INTO customers (full_name, customer_id, created) VALUES (%s, %s, %s) ON CONFLICT (customer_id) DO NOTHING", (full_name, customer_id, created))
+        else:
+            cur.execute("INSERT OR IGNORE INTO customers (full_name, customer_id, created) VALUES (?, ?, ?)", 
                     (full_name, customer_id, created))
         conn.commit()
         conn.close()
@@ -4473,7 +4442,7 @@ def api_orders_new():
     delivery_type = data.get("delivery_type", "pickup")
     tip = data.get("tip", "")
     delivery_latitude = data.get("delivery_latitude", "")
-    delivery_longitude = data.get("delivery_longitude", "") # This was missing in the previous diff, adding it now
+    delivery_longitude = data.get("delivery_longitude", "")
     delivery_address = data.get("delivery_address", "")
     payment_method = data.get("payment_method", "online")
     payment_phone = data.get("payment_phone", "")
@@ -4488,11 +4457,11 @@ def api_orders_new():
         INSERT INTO orders (customer, customer_id, food, price, phone, delivery_type, tip, delivery_latitude, delivery_longitude, delivery_address, payment_method, qabyl, omoda, dostavka, created)
         VALUES ({qm()},{qm()},{qm()},{qm()},{qm()},{qm()},{qm()},{qm()},{qm()},{qm()},{qm()}, 0, 0, 0, {qm()})
     """, (customer, customer_id, food, price, phone, delivery_type, tip, delivery_latitude, delivery_longitude, delivery_address, payment_method, created))
-    
-    order_id = cur.lastrowid if not DATABASE_URL else cur.execute("SELECT LASTVAL()") or cur.fetchone()[0]
+    order_id = cur.lastrowid
     
     # Сабти заказ дар таърихи доимӣ (Архив), то пас аз нест кардан боқӣ монад
-    cur.execute(f"INSERT INTO full_order_history (customer, customer_id, food, price, phone, delivery_type, tip, payment_method, created) VALUES ({qm()},{qm()},{qm()},{qm()},{qm()},{qm()},{qm()},{qm()},{qm()})",
+    cur.execute(
+        f"INSERT INTO full_order_history (customer, customer_id, food, price, phone, delivery_type, tip, payment_method, created) VALUES ({qm()},{qm()},{qm()},{qm()},{qm()},{qm()},{qm()},{qm()},{qm()})",
         (customer, customer_id, food, price, phone, delivery_type, tip, payment_method, created)
     )
 
@@ -4500,7 +4469,7 @@ def api_orders_new():
     try:
         p_clean = "".join(c for c in str(price).replace(',', '.') if c.isdigit() or c == '.')
         amount = float(p_clean) if p_clean else 0.0
-        cur.execute(f"INSERT INTO revenue_history (amount, day, customer_id) VALUES ({qm()},{qm()},{qm()})", (amount, datetime.now().strftime("%Y-%m-%d"), customer_id))
+        cur.execute(f"INSERT INTO revenue_history (amount, day, customer_id) VALUES ({qm()}, {qm()}, {qm()})", (amount, datetime.now().strftime("%Y-%m-%d"), customer_id))
     except: pass
 
     conn.commit()
@@ -4567,11 +4536,9 @@ def api_foods_list():
 def get_orders():
     try:
         with get_db_connection() as conn:
-            # row_factory is not supported in psycopg2 but we can manually dict
-            cur = conn.cursor()
+            cur = get_cursor(conn)
             cur.execute("SELECT food, price, qabyl, omoda FROM orders ORDER BY id DESC LIMIT 10")
-            colnames = [desc[0] for desc in cur.description]
-            orders = [dict(zip(colnames, row)) for row in cur.fetchall()]
+            orders = [to_dict(row, cur) for row in cur.fetchall()]
         return orders
     except Exception as e:
         print(f"Database error: {e}")
@@ -4580,10 +4547,9 @@ def get_orders():
 def get_all_foods():
     try:
         with get_db_connection() as conn:
-            cur = conn.cursor()
+            cur = get_cursor(conn)
             cur.execute("SELECT id, name, price, category, subcategory, image_url, description FROM foods")
-            colnames = [desc[0] for desc in cur.description]
-            foods = [dict(zip(colnames, row)) for row in cur.fetchall()]
+            foods = [to_dict(row, cur) for row in cur.fetchall()]
         
         # Group by category and detect media type
         cat_map = {}
@@ -4598,19 +4564,17 @@ def get_all_foods():
 def get_all_reviews():
     try:
         with get_db_connection() as conn:
-            cur = conn.cursor()
+            cur = get_cursor(conn)
             cur.execute("SELECT id, name, text, stars, image_url, created FROM reviews ORDER BY id DESC")
-            colnames = [desc[0] for desc in cur.description]
-            return [dict(zip(colnames, row)) for row in cur.fetchall()]
+            return [to_dict(row, cur) for row in cur.fetchall()]
     except: return []
 
 def get_all_aktsii():
     try:
         with get_db_connection() as conn:
-            cur = conn.cursor()
+            cur = get_cursor(conn)
             cur.execute("SELECT title, price, description, image_url, created FROM aktsii ORDER BY id DESC")
-            colnames = [desc[0] for desc in cur.description]
-            results = [dict(zip(colnames, row)) for row in cur.fetchall()]
+            results = [to_dict(row, cur) for row in cur.fetchall()]
             for r in results:
                 r['is_video'] = bool(r.get('image_url') and r['image_url'].lower().endswith(('.mp4', '.webm', '.mov', '.ogg')))
             return results
@@ -4625,19 +4589,21 @@ def food_detail(food_id):
     """Display detailed information for a single food item"""
     try:
         conn = get_db_connection()
-        cur = conn.cursor()
-        cur.execute(f"""
+        cur = get_cursor(conn)
+        cur.execute("""
             SELECT id, name, price, category, description, image_url, created
-            FROM foods WHERE id = {qm()}
+            FROM foods WHERE id = %s
+        """ if DATABASE_URL else """
+            SELECT id, name, price, category, description, image_url, created
+            FROM foods WHERE id = ?
         """, (food_id,))
         food = cur.fetchone()
-        colnames = [desc[0] for desc in cur.description]
         conn.close()
         
         if not food:
             return redirect('/')
         
-        food = dict(zip(colnames, food))
+        food = to_dict(food, cur)
         food['image_path'] = f"/static/images/{food['image_url']}" if food['image_url'] else ""
         
         # Check if image is a video
