@@ -1132,10 +1132,10 @@ HTML = r"""<!DOCTYPE html>
         let orders = [];
         let filterMode = 'all';
         let revenueChart = null;
+        let lastSeenOrderId = 0; // Initialize here, will be updated after loading orders
         let accessTarget = null;
         let confirmAction = null;
         let isAuthorized = false;
-        let lastSeenOrderId = 0;
 
         const newOrderSound = new Audio('/static/music.mp3'); // Файли садоӣ бояд дар папкаи static бошад
 
@@ -1183,6 +1183,10 @@ HTML = r"""<!DOCTYPE html>
                 }
             } catch (e) {}
             orders = [];
+            // After loading orders, set lastSeenOrderId to the max ID found
+            if (orders.length > 0) {
+                lastSeenOrderId = Math.max(...orders.map(o => o.id));
+            }
             saveOrders();
         }
 
@@ -1964,6 +1968,7 @@ HTML = r"""<!DOCTYPE html>
             const data = await res.json();
             const newOrders = Array.isArray(data.orders) ? data.orders : [];
             if (newOrders.length === 0) return;
+            console.log("Fetched new orders from API:", newOrders); // Debugging line
 
             // Филтр кардани танҳо заказҳои воқеан нав
             const trulyNewOrders = newOrders.filter(o => !orders.some(existing => existing.id === o.id));
@@ -1993,6 +1998,7 @@ HTML = r"""<!DOCTYPE html>
                 if (o.id > lastSeenOrderId) lastSeenOrderId = o.id;
             }
 
+            console.log("Truly new orders after filtering:", trulyNewOrders); // Debugging line
             renderTable();
 
             // Хабарнома (Toast) танҳо барои заказҳои нав ва агар боркунии аввалия набошад
