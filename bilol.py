@@ -24,6 +24,20 @@ DATABASE_URL = os.environ.get("DATABASE_URL")
 if DATABASE_URL and DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
 
+# Helper to parse price string to float
+def parse_price_to_float(price_str):
+    if not price_str:
+        return 0.0
+    # Remove all non-digit/dot/comma characters, then replace comma with dot
+    cleaned_price = re.sub(r'[^\d.,]', '', str(price_str)).replace(',', '.')
+    # Find the first sequence of digits and an optional dot
+    match = re.search(r'(\d+(\.\d+)?)', cleaned_price)
+    if match:
+        try:
+            return float(match.group(1))
+        except ValueError:
+            return 0.0
+    return 0.0
 def get_db_connection():
     if DATABASE_URL:
         # Пайвастшавӣ ба PostgreSQL (барои Render)
@@ -2678,8 +2692,7 @@ def api_orders_update_status():
     if field in ('food', 'refund', 'out_of_stock'):
         cur.execute(f"SELECT refund, price, out_of_stock FROM orders WHERE id = {qm()}", (order_id,))
         rv, ps, oos = cur.fetchone()
-        try: pc = float("".join(c for c in str(ps).replace(',', '.') if c.isdigit() or c == '.'))
-        except: pc = 0.0
+        pc = parse_price_to_float(ps)
         if oos and pc > 0 and rv >= pc:
             cur.execute(f"UPDATE orders SET qabyl = 1, omoda = 1 WHERE id = {qm()}", (order_id,))
 
@@ -2687,9 +2700,7 @@ def api_orders_update_status():
     if field == 'refund':
         diff = db_value - old_refund
         if diff != 0:
-            # 1. Кам кардани маблағ аз таърихи даромад (График)
-            # Мо маблағи манфиро илова мекунем, то суммаи умумии он рӯз дуруст шавад
-            order_date = created_at[:10] if created_at else datetime.now().strftime("%Y-%m-%d")
+            order_date = created_at[:10] if created_at else datetime.now().strftime("%Y-%m-%d") # Use the original order date
             cur.execute(f"INSERT INTO revenue_history (amount, day, customer_id) VALUES ({qm()}, {qm()}, {qm()})", (-diff, order_date, customer_id))
             
             # 2. Навсозии сумма дар архиви заказҳо (Full History)
@@ -2722,21 +2733,23 @@ def api_orders_update_status():
         sub_row = cur.fetchone()
         if sub_row:
             sub_info = json.loads(sub_row[0])
-            # Гирифтани маблағ ва рефунд барои муқоиса
+            
             cur.execute(f"SELECT refund, price FROM orders WHERE id = {qm()}", (order_id,))
             ref_val, orig_price_str = cur.fetchone()
             
-            # Тоза кардани нархи аслӣ барои муқоиса
-            try:
-                p_clean = "".join(c for c in str(orig_price_str).replace(',', '.') if c.isdigit() or c == '.')
-                orig_p = float(p_clean) if p_clean else 0.0
-            except: orig_p = 0.0
+            orig_p = parse_price_to_float(orig_price_str)
             
             # Ёфтани хӯрокҳои хатзада
             struck_items = re.findall(r'<s>(.*?)</s>', food_name)
             struck_str = f" \"{', '.join(struck_items)}\"" if struck_items else ""
 
-            if field == 'qabyl':
+            msg = ""
+            # Prioritize OOS/Refund messages
+            if ref_val >= orig_p and orig_p > 0: # All items struck out, full refund
+                msg = f"К сожалению, нет никаких блюд и мы вернем ваши деньги: {ref_val} смн. ❌"
+            elif ref_val > 0: # Some items struck out, partial refund
+                msg = f"Извините, блюд{struck_str} нет в наличии, и мы вернем вам ваши деньги: {ref_val} смн. ❌"
+            elif field == 'qabyl': # Order accepted
                 t_val = estimated_time if estimated_time is not None else old_est_time
                 time_str = ""
                 if t_val:
@@ -2744,29 +2757,13 @@ def api_orders_update_status():
                         time_str = f" Ваш заказ будет готов и доставлен примерно через {t_val} минут."
                     else:
                         time_str = f" Ваш заказ будет готов примерно через {t_val} минут."
-
-                # Агар ҳамаи хӯрокҳо хат зада шуда бошанд
-                if ref_val >= orig_p and orig_p > 0: 
-                    msg = f"К сожалению, нет никаких блюд и мы вернем ваши деньги: {ref_val} смн."
-                elif ref_val > 0:
-                    msg = f"Извините, блюд{struck_str} нет в наличии, и мы вернем вам ваши деньги: {ref_val} смн."
-                else:
-                    msg = f"Заказ принят!{time_str} Пожалуйста, переведите оплату на номер 754169090."
-            elif field in ('out_of_stock', 'food', 'refund'):
-                if ref_val >= orig_p and orig_p > 0:
-                    msg = f"К сожалению, нет никаких блюд и мы вернем ваши деньги: {ref_val} смн."
-                else:
-                    msg = f"Извините, блюд{struck_str} нет в наличии, и мы вернем вам ваши деньги: {ref_val} смн."
-            elif field == 'omoda':
-                # Пешгирӣ аз фиристодани паёми "Готов", агар заказ пурра бекор шуда бошад
-                if ref_val >= orig_p and orig_p > 0:
-                    conn.close()
-                    return jsonify({"ok": updated})
+                msg = f"Заказ принят!{time_str} Пожалуйста, переведите оплату на номер 754169090." # Payment instruction
+            elif field == 'omoda': # Order ready
                 if del_type == 'pickup':
                     msg = "Ваш заказ готов! Пожалуйста, заберите свои блюда."
                 else:
                     msg = "Ваш заказ готов! Через несколько минут мы его доставим. 🚀"
-            elif field == 'dostavka':
+            elif field == 'dostavka': # Delivery status
                 if db_value == 1:
                     msg = "Мы везем ваш заказ! 🚀🚗"
                 elif db_value == 2:
@@ -2774,7 +2771,7 @@ def api_orders_update_status():
                 else:
                     msg = "Статус доставки обновлен."
             else:
-                msg = "Статус заказа обновлен."
+                msg = "Статус заказа обновлен." # Generic update
 
             # Тоза кардани тегҳои <s> аз рӯйхати хӯрокҳо барои хабарномаи тоза
             display_food = re.sub(r'<s>.*?</s>', '', food_name)

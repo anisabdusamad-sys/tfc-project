@@ -3493,9 +3493,19 @@ HTML_TEMPLATE = r"""
         let latestCustomerStatus = localStorage.getItem("tfc_last_notified_status") || "";
         let liveStatusTimeout = null; // Тағйироти нав: барои нигоҳ доштани ID-и setTimeout
         
+        // Helper to parse price string to float (JavaScript)
+        function parsePriceToFloat(priceStr) {
+            if (!priceStr) return 0.0;
+            const cleanedPrice = String(priceStr).replace(/[^0-9.,]/g, '').replace(',', '.');
+            const match = cleanedPrice.match(/(\d+(\.\d+)?)/);
+            if (match) {
+                return parseFloat(match[1]);
+            }
+            return 0.0;
+        }
+
         // Овози хабарнома аз папкаи static
         const notificationSound = new Audio("/static/music.mp3");
-
         function parsePriceOptions(rawPrice) {
             const clean = String(rawPrice || "").replace(/\\s+/g, "").replace(/[сc]$/, "");
             if (!clean.includes("/")) {
@@ -4155,8 +4165,8 @@ HTML_TEMPLATE = r"""
                 let oosPart = "";
                 // Тафтиш: Оё ҳамаи хӯрокҳо хат зада шудаанд?
                 const cleanPrice = parseFloat(String(last.price || 0).replace(',', '.').match(/[0-9.]+/)[0]);
-                const cleanRefund = parseFloat(String(last.refund || 0).replace(',', '.').match(/[0-9.]+/)[0] || 0);
-                
+                const cleanRefund = parsePriceToFloat(last.refund);
+                const cleanPrice = parsePriceToFloat(last.price);
                 if (last.out_of_stock && cleanRefund >= cleanPrice && cleanPrice > 0) {
                     statusType = "cancelled_oos";
                     statusText = `К сожалению, нет никаких блюд и мы вернем ваши деньги: ${last.refund} смн. ❌`;
