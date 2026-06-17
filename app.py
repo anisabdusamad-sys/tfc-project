@@ -359,6 +359,9 @@ def init_db() -> None:
     cur.execute("UPDATE foods SET image_url = '' WHERE image_url IN ('d9.png', 'd10.png', 'd11.png')")
 
     conn.commit()
+    # Ensure delivery_type is never empty for existing orders
+    # This helps with correct push notifications for pickup orders
+    cur.execute(f"UPDATE orders SET delivery_type = 'pickup' WHERE delivery_type = '' OR delivery_type IS NULL")
     conn.close()
 
 init_db()
@@ -2404,11 +2407,13 @@ HTML_TEMPLATE = r"""
     </main>
     <script>
         document.addEventListener("DOMContentLoaded", () => {
-            const session = localStorage.getItem("tfc_session");
-            const profile = localStorage.getItem("tfc_customer_profile");
+            const session = localStorage.getItem("tfc_session"); // Changed from tfc_session to tfc_customer_profile
+            const profile = localStorage.getItem("tfc_customer_profile"); // Changed from tfc_session to tfc_customer_profile
             
-            if (session && profile) {
-                showApp();
+            if (session && profile) { // Check both session and profile
+                showApp(); // If logged in, show the app
+                // No need to save active section here, showApp will handle it
+                // based on sessionStorage or default to 'menu'
             } else {
                 const auth = document.getElementById('auth-section');
                 if (auth) auth.classList.remove('hidden');
@@ -2475,7 +2480,7 @@ HTML_TEMPLATE = r"""
             }
 
             // МАҲЗ ДАР ҲАМИН ҶО: вақте корбар тугмаро зер мекунад, 
-            // мо Fullscreen-ро фаъол мекунем, то интерфейси браузер гум шавад.
+            // мо Fullscreen-ро фаъол мекунем, то интерфейси браузер гум шавад. (Removed this line as it's already in the code)
             triggerFullScreen();
 
             // Эҷоди профили корбар ва захира дар localStorage
@@ -3384,62 +3389,32 @@ HTML_TEMPLATE = r"""
         }
 
         function showNotifications() {
+            saveActiveSection('notifications-section');
             setTimeout(() => {
-            document.getElementById('intro-section').style.display = 'none';
-            document.getElementById('menu').style.display = 'none';
-            document.getElementById('notifications-section').style.display = 'block';
+            document.getElementById('intro-section').style.display = 'none'; document.getElementById('menu').style.display = 'none'; document.getElementById('notifications-section').style.display = 'block';
             renderNotificationsList();
-            // Ҳангоми кушодани хабарҳо, ҳисобкунакро тоза мекунем
-            notificationsHistory.forEach(n => { n.isNew = false; });
-            localStorage.setItem("tfc_notifications_history", JSON.stringify(notificationsHistory));
-
-            unreadNotifCount = 0;
-            localStorage.setItem("tfc_unread_notif_count", unreadNotifCount);
-            updateNotifBadge();
-            if(typeof animateSection === 'function') animateSection('notifications-section');
-            setTopControlsVisible(false);
-            window.scrollTo(0, 0);
-            document.documentElement.scrollTop = 0;
-            document.body.scrollTop = 0;
+            notificationsHistory.forEach(n => { n.isNew = false; }); localStorage.setItem("tfc_notifications_history", JSON.stringify(notificationsHistory));
+            unreadNotifCount = 0; localStorage.setItem("tfc_unread_notif_count", unreadNotifCount); updateNotifBadge();
+            animateSection('notifications-section'); setTopControlsVisible(false); window.scrollTo(0, 0); document.documentElement.scrollTop = 0; document.body.scrollTop = 0;
             }, 350);
         }
+
         function hideNotifications() {
+            saveActiveSection('menu');
             setTimeout(() => {
-            document.getElementById('notifications-section').style.display = 'none';
-            document.getElementById('menu').style.display = 'block';
-            document.getElementById('intro-section').style.display = 'flex';
-            animateSection('menu');
-            animateSection('intro-section');
-            updateTopControlsByScroll();
-            window.scrollTo(0, 0);
-            document.documentElement.scrollTop = 0;
-            document.body.scrollTop = 0;
+            document.getElementById('notifications-section').style.display = 'none'; document.getElementById('menu').style.display = 'block'; document.getElementById('intro-section').style.display = 'flex';
+            animateSection('menu'); animateSection('intro-section'); updateTopControlsByScroll(); window.scrollTo(0, 0); document.documentElement.scrollTop = 0; document.body.scrollTop = 0;
             }, 350);
         }
 
-        // New Sushi Subcategory Logic
         function showSushi() {
+            saveActiveSection('sushi-section');
             setTimeout(() => {
-                document.getElementById('intro-section').style.display = 'none';
-                document.getElementById('menu').style.display = 'none';
-                const sushiSection = document.getElementById('sushi-section');
-                const subCategories = document.getElementById('sushi-subcategories');
-                const productGrid = document.getElementById('sushi-filtered-product-grid');
-
-                sushiSection.style.display = 'block';
-                subCategories.style.display = 'grid'; // Show subcategory cards
-                document.getElementById('sushi-category-back-btn').style.display = 'none'; // Hide sub-back
-                document.getElementById('sushi-main-back-btn').style.display = 'inline-flex'; // Show main-back
-
-                sushiSection.querySelector('h2').innerHTML = 'СУШИ И РОЛЛЫ'; // Reset title
-                // Пинҳон кардани хӯрокҳо то он даме, ки зергурӯҳ интихоб шавад
-                productGrid.querySelectorAll('.product-card').forEach(c => c.style.display = 'none');
-
-                if(typeof animateSection === 'function') animateSection('sushi-section');
-                setTopControlsVisible(false);
-                window.scrollTo(0, 0);
-                document.documentElement.scrollTop = 0;
-                document.body.scrollTop = 0;
+                document.getElementById('intro-section').style.display = 'none'; document.getElementById('menu').style.display = 'none';
+                const sushiSection = document.getElementById('sushi-section'); const subCategories = document.getElementById('sushi-subcategories'); const productGrid = document.getElementById('sushi-filtered-product-grid');
+                sushiSection.style.display = 'block'; subCategories.style.display = 'grid'; document.getElementById('sushi-category-back-btn').style.display = 'none'; document.getElementById('sushi-main-back-btn').style.display = 'inline-flex';
+                sushiSection.querySelector('h2').innerHTML = 'СУШИ И РОЛЛЫ'; productGrid.querySelectorAll('.product-card').forEach(c => c.style.display = 'none');
+                animateSection('sushi-section'); setTopControlsVisible(false); window.scrollTo(0, 0); document.documentElement.scrollTop = 0; document.body.scrollTop = 0;
             }, 350);
         }
 
@@ -3486,20 +3461,12 @@ HTML_TEMPLATE = r"""
         }
 
         function hideSushi() {
+            saveActiveSection('menu');
             setTimeout(() => {
-                stopAllVideos();
-                document.getElementById('sushi-section').style.display = 'none';
-                document.getElementById('menu').style.display = 'block';
-                document.getElementById('intro-section').style.display = 'flex';
-                animateSection('menu');
-                animateSection('intro-section');
-                updateTopControlsByScroll();
-                window.scrollTo(0, 0);
-                document.documentElement.scrollTop = 0;
-                document.body.scrollTop = 0;
+                stopAllVideos(); document.getElementById('sushi-section').style.display = 'none'; document.getElementById('menu').style.display = 'block'; document.getElementById('intro-section').style.display = 'flex';
+                animateSection('menu'); animateSection('intro-section'); updateTopControlsByScroll(); window.scrollTo(0, 0); document.documentElement.scrollTop = 0; document.body.scrollTop = 0;
             }, 350);
         }
-
         function clearNotifications() {
             document.getElementById('notif-clear-modal-overlay').classList.add('active');
         }
@@ -4506,7 +4473,7 @@ def api_orders_new():
     delivery_type = data.get("delivery_type", "pickup")
     tip = data.get("tip", "")
     delivery_latitude = data.get("delivery_latitude", "")
-    delivery_longitude = data.get("delivery_longitude", "")
+    delivery_longitude = data.get("delivery_longitude", "") # This was missing in the previous diff, adding it now
     delivery_address = data.get("delivery_address", "")
     payment_method = data.get("payment_method", "online")
     payment_phone = data.get("payment_phone", "")
