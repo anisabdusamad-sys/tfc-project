@@ -2763,60 +2763,253 @@ HTML_TEMPLATE = r"""
         }
     </script>
     <script>
-        function showSection(sectionId) {
-            const sections = ['intro-section', 'menu', 'menu-section', 'pizza-section', 'sushi-section', 'fastfood-section', 'summer-menu-section', 'combo-section', 'otziv-section', 'aktsii-section', 'adres-section', 'vakansii-section', 'notifications-section'];
-            sections.forEach(id => {
-                const el = document.getElementById(id);
-                if (el) el.style.display = 'none';
-            });
-            const target = document.getElementById(sectionId);
-            if (target) {
-                target.style.display = (sectionId === 'adres-section' || sectionId === 'intro-section') ? 'flex' : 'block';
-                if (typeof animateSection === 'function') animateSection(sectionId);
-            }
-            setTopControlsVisible(sectionId === 'menu' || sectionId === 'intro-section');
-            window.scrollTo(0, 0);
-        }
-
         function animateSection(id) {
             const el = document.getElementById(id);
-            if (!el) return;
+            if (!el) {
+                console.warn(`Element with ID '${id}' not found for animation.`);
+                return;
+            }
+
             el.classList.remove('page-transition');
-            void el.offsetWidth;
+            void el.offsetWidth; // Trigger reflow
             el.classList.add('page-transition');
         }
 
         function showMenu() {
-            showSection('menu-section');
-            document.getElementById('menu-subcategories').style.display = 'grid';
-            document.getElementById('category-back-btn').style.display = 'none';
-            document.getElementById('main-back-btn').style.display = 'inline-flex';
-            document.getElementById('menu-section').querySelector('h2').textContent = 'МЕНЮ';
-            document.getElementById('filtered-product-grid').querySelectorAll('.product-card').forEach(c => c.style.display = 'none');
+            setTimeout(() => {
+                document.getElementById('intro-section').style.display = 'none';
+                document.getElementById('menu').style.display = 'none';
+                const menuSection = document.getElementById('menu-section');
+                const subCategories = document.getElementById('menu-subcategories');
+                const productGrid = document.getElementById('filtered-product-grid');
+
+                menuSection.style.display = 'block';
+                subCategories.style.display = 'grid';
+                document.getElementById('category-back-btn').style.display = 'none'; // Hide sub-back
+                document.getElementById('main-back-btn').style.display = 'inline-flex'; // Show main-back
+                
+                menuSection.querySelector('h2').innerHTML = 'МЕНЮ';
+                // Пинҳон кардани хӯрокҳо то он даме, ки зергурӯҳ интихоб шавад
+                productGrid.querySelectorAll('.product-card').forEach(c => c.style.display = 'none');
+
+                animateSection('menu-section');
+                setTopControlsVisible(false);
+                window.scrollTo(0, 0);
+                document.documentElement.scrollTop = 0;
+                document.body.scrollTop = 0;
+            }, 150);
+        }
+
+        function filterMenu(subCategory) {
+            const menuSection = document.getElementById('menu-section');
+            const grid = document.getElementById('filtered-product-grid');
+            const title = menuSection.querySelector('h2');
+
+            // Таъхири кӯтоҳ барои эффекти синамоӣ
+            setTimeout(() => {
+                // Пинҳон кардани тугмаҳои зеркатегорияҳо барои намуди "саҳифаи нав"
+                document.getElementById('menu-subcategories').style.display = 'none';
+                document.getElementById('main-back-btn').style.display = 'none';
+                document.getElementById('category-back-btn').style.display = 'inline-flex';
+                
+                title.innerHTML = subCategory.toUpperCase();
+
+                const cards = grid.querySelectorAll('.product-card');
+                cards.forEach(card => {
+                    const cardSub = card.getAttribute('data-subcategory') || '';
+                    const name = card.getAttribute('data-name').toUpperCase();
+                    let show = false;
+                    
+                    if (cardSub === subCategory) {
+                        show = true;
+                    } else if (!cardSub) {
+                        if (subCategory === 'Паста') show = name.includes('ПАСТА') || name.includes('ГНЁЗДА');
+                        if (subCategory === 'Салаты') show = name.includes('САЛАТ') || name.includes('БАКЛАЖАН') || name.includes('ГРЕЧЕСКИЙ');
+                        if (subCategory === 'Супы') show = name.includes('СУП') || name.includes('БОРЩ') || name.includes('ЛАГМАН') || name.includes('ЧАХОВ') || name.includes('МЕРДЖИМЕК');
+                        if (subCategory === 'Горячие блюда') show = name.includes('СТЕКС') || name.includes('КОТЛЕТ') || name.includes('БАРАНИНА') || name.includes('КАБОБ') || name.includes('ЖАРОВНЯ') || name.includes('ТАБАКА') || name.includes('СТЕЙК') || name.includes('КОРЕЙКА');
+                        if (subCategory === 'Десерты') show = name.includes('ЧИЗКЕЙК') || name.includes('РАФАЭЛЛО') || name.includes('НАПОЛЕОН') || name.includes('ТИРАМИСУ') || name.includes('ФРУКТОВАЯ') || name.includes('КЕШЬЮ');
+                        if (subCategory === 'Напитки') show = name.includes('АМЕРИКАНО') || name.includes('КАПУЧИНO') || name.includes('ЛАТТЕ') || name.includes('ЭСПРЕССО') || name.includes('ЧАЙ') || name.includes('КОФЕ') || name.includes('АЙРАН') || name.includes('МОХИТО');
+                    }
+                    card.style.display = show ? 'block' : 'none';
+                });
+
+                window.scrollTo(0, 0);
+                document.documentElement.scrollTop = 0;
+                document.body.scrollTop = 0;
+
+                // Фаъол кардани аниматсияи Cinematic
+                [title, grid].forEach(el => {
+                    el.classList.remove('page-transition');
+                    void el.offsetWidth; 
+                    el.classList.add('page-transition');
+                });
+            }, 250);
         }
 
         function hideMenu() {
+            setTimeout(() => {
             stopAllVideos();
-            showSection('menu');
+            document.getElementById('menu-section').style.display = 'none';
+            document.getElementById('menu').style.display = 'block';
+            document.getElementById('menu-subcategories').style.display = 'none';
             document.getElementById('intro-section').style.display = 'flex';
+            animateSection('menu');
+            animateSection('intro-section');
             updateTopControlsByScroll();
+            window.scrollTo(0, 0);
+            document.documentElement.scrollTop = 0;
+            document.body.scrollTop = 0;
+            }, 350);
         }
 
         function showPizza() {
-            showSection('pizza-section');
-            document.getElementById('pizza-subcategories').style.display = 'grid';
+            setTimeout(() => {
+            document.getElementById('intro-section').style.display = 'none';
+            document.getElementById('menu').style.display = 'none';
+            document.getElementById('pizza-section').style.display = 'block';
+            const pizzaSection = document.getElementById('pizza-section');
+            const subCategories = document.getElementById('pizza-subcategories');
+            const productGrid = document.getElementById('pizza-filtered-product-grid');
+
+            pizzaSection.style.display = 'block';
+            subCategories.style.display = 'grid';
             document.getElementById('pizza-category-back-btn').style.display = 'none';
             document.getElementById('pizza-main-back-btn').style.display = 'inline-flex';
-            document.getElementById('pizza-section').querySelector('h2').textContent = 'ПИЦЦА';
-            document.getElementById('pizza-filtered-product-grid').querySelectorAll('.product-card').forEach(c => c.style.display = 'none');
+
+            pizzaSection.querySelector('h2').innerHTML = 'ПИЦЦА';
+            productGrid.querySelectorAll('.product-card').forEach(c => c.style.display = 'none');
+
+            animateSection('pizza-section');
+            setTopControlsVisible(false);
+            window.scrollTo(0, 0);
+            document.documentElement.scrollTop = 0;
+            document.body.scrollTop = 0;
+            }, 350);
         }
 
-        function hidePizza() {
-            stopAllVideos();
-            showSection('menu');
-            document.getElementById('intro-section').style.display = 'flex';
-            updateTopControlsByScroll();
+        function filterPizza(subCategory) {
+            const pizzaSection = document.getElementById('pizza-section');
+            const grid = document.getElementById('pizza-filtered-product-grid');
+            const title = pizzaSection.querySelector('h2');
+
+            setTimeout(() => {
+                document.getElementById('pizza-subcategories').style.display = 'none';
+                document.getElementById('pizza-main-back-btn').style.display = 'none';
+                document.getElementById('pizza-category-back-btn').style.display = 'inline-flex';
+                
+                title.innerHTML = subCategory.toUpperCase();
+
+                const cards = grid.querySelectorAll('.product-card');
+                cards.forEach(card => {
+                    const cardSub = card.getAttribute('data-subcategory') || '';
+                    const name = card.getAttribute('data-name').toUpperCase();
+                    let show = false;
+                    if (cardSub === subCategory) show = true;
+                    else if (!cardSub) {
+                        if (subCategory === 'Пицца') show = name.includes('ПИЦЦА');
+                        if (subCategory === 'Хачапури') show = name.includes('ХАЧАПУРИ');
+                    }
+                    card.style.display = show ? 'block' : 'none';
+                });
+
+                window.scrollTo(0, 0);
+                [title, grid].forEach(el => {
+                    el.classList.remove('page-transition');
+                    void el.offsetWidth; 
+                    el.classList.add('page-transition');
+                });
+            }, 250);
         }
+        function hidePizza() {
+            setTimeout(() => {
+            stopAllVideos();
+            document.getElementById('pizza-section').style.display = 'none';
+            document.getElementById('menu').style.display = 'block';
+            document.getElementById('pizza-subcategories').style.display = 'none';
+            document.getElementById('intro-section').style.display = 'flex';
+            animateSection('menu');
+            animateSection('intro-section');
+            updateTopControlsByScroll();
+            window.scrollTo(0, 0);
+            document.documentElement.scrollTop = 0;
+            document.body.scrollTop = 0;
+            }, 350);
+        }
+
+        function showSushi() {
+            setTimeout(() => {
+                document.getElementById('intro-section').style.display = 'none';
+                document.getElementById('menu').style.display = 'none';
+                const sushiSection = document.getElementById('sushi-section');
+                const subCategories = document.getElementById('sushi-subcategories');
+                const productGrid = document.getElementById('sushi-filtered-product-grid');
+
+                sushiSection.style.display = 'block';
+                subCategories.style.display = 'grid';
+                document.getElementById('sushi-category-back-btn').style.display = 'none';
+                document.getElementById('sushi-main-back-btn').style.display = 'inline-flex';
+
+                sushiSection.querySelector('h2').innerHTML = 'СУШИ И РОЛЛЫ';
+                productGrid.querySelectorAll('.product-card').forEach(c => c.style.display = 'none');
+
+                animateSection('sushi-section');
+                setTopControlsVisible(false);
+                window.scrollTo(0, 0);
+            }, 350);
+        }
+
+        function filterSushi(subCategory) {
+            const sushiSection = document.getElementById('sushi-section');
+            const grid = document.getElementById('sushi-filtered-product-grid');
+            const title = sushiSection.querySelector('h2');
+
+            setTimeout(() => {
+                document.getElementById('sushi-subcategories').style.display = 'none';
+                document.getElementById('sushi-main-back-btn').style.display = 'none';
+                document.getElementById('sushi-category-back-btn').style.display = 'inline-flex';
+
+                title.innerHTML = subCategory.toUpperCase();
+
+                const cards = grid.querySelectorAll('.product-card');
+                cards.forEach(card => {
+                    const cardSub = card.getAttribute('data-subcategory') || '';
+                    const name = card.getAttribute('data-name').toUpperCase();
+                    let show = false;
+                    
+                    if (cardSub === subCategory) {
+                        show = true;
+                    } else if (!cardSub) {
+                        if (subCategory === 'Суши') {
+                            show = name.includes('СУШИ') && !(name.includes('РОЛЛ') || name.includes('МАКИ') || name.includes('КАЛИФОРНИЯ') || name.includes('СЕТ') || name.includes('ТЕМПУРА'));
+                        } else if (subCategory === 'Роллы') {
+                            show = name.includes('РОЛЛ') || name.includes('МАКИ') || name.includes('КАЛИФОРНИЯ') || name.includes('ТЕМПУРА') || name.includes('СЕТ') || (name.includes('ЗАПЕЧЕН') && !name.includes('СУШИ'));
+                        }
+                    }
+                    card.style.display = show ? 'block' : 'none';
+                });
+
+                window.scrollTo(0, 0);
+                [title, grid].forEach(el => {
+                    el.classList.remove('page-transition');
+                    void el.offsetWidth;
+                    el.classList.add('page-transition');
+                });
+            }, 250);
+        }
+
+        function hideSushi() {
+            setTimeout(() => {
+                stopAllVideos();
+                document.getElementById('sushi-section').style.display = 'none';
+                document.getElementById('menu').style.display = 'block';
+                document.getElementById('intro-section').style.display = 'flex';
+                animateSection('menu');
+                animateSection('intro-section');
+                updateTopControlsByScroll();
+                window.scrollTo(0, 0);
+            }, 350);
+        }
+
         function showFastFood() {
             setTimeout(() => {
             document.getElementById('intro-section').style.display = 'none';
