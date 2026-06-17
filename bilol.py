@@ -2515,9 +2515,12 @@ def api_orders_new():
 
     # Тафтиши Токен барои амният
     if request.headers.get("Authorization") != f"Bearer {API_TOKEN}":
+        print(f"ПРЕДУПРЕЖДЕНИЕ: Попытка доступа с неверным токеном!")
         return jsonify({"ok": False, "error": "unauthorized"}), 401
 
     data = request.get_json(silent=True) or {}
+    print(f"НОВЫЙ ЗАКАЗ ПОСТУПИЛ: {data.get('customer')} - {data.get('food')}")
+
     customer = (data.get("customer") or "Неизвестно").strip()
     customer_id = str(data.get("customer_id") or "").strip()
     food = (data.get("food") or "Блюдо").strip()
@@ -2533,11 +2536,18 @@ def api_orders_new():
 
     conn = get_db_connection()
     cur = conn.cursor()
+    
+    # Барои PostgreSQL мо бояд RETURNING id-ро истифода барем
+    query = f"INSERT INTO orders (customer, customer_id, food, price, phone, delivery_type, delivery_latitude, delivery_longitude, delivery_address, payment_method, tip, qabyl, omoda, created) VALUES ({qm()},{qm()},{qm()},{qm()},{qm()},{qm()},{qm()},{qm()},{qm()},{qm()},{qm()}, 0, 0, {qm()})"
+    if DATABASE_URL:
+        query += " RETURNING id"
+    
     cur.execute(
-        f"INSERT INTO orders (customer, customer_id, food, price, phone, delivery_type, delivery_latitude, delivery_longitude, delivery_address, payment_method, tip, qabyl, omoda, created) VALUES ({qm()},{qm()},{qm()},{qm()},{qm()},{qm()},{qm()},{qm()},{qm()},{qm()},{qm()}, 0, 0, {qm()})",
+        query,
         (customer, customer_id, food, price, phone, delivery_type, delivery_latitude, delivery_longitude, delivery_address, payment_method, tip, created)
     )
-    order_id = cur.lastrowid
+    
+    order_id = cur.fetchone()[0] if DATABASE_URL else cur.lastrowid
 
     # Log to full history table
     cur.execute(
