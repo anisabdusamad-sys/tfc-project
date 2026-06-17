@@ -4,6 +4,7 @@ import psycopg2
 import psycopg2.extras
 import json
 import random
+import requests
 import os
 from flask import Flask, render_template_string, url_for, request, jsonify, send_from_directory, redirect
 from datetime import datetime
@@ -25,6 +26,10 @@ VAPID_CLAIMS = {"sub": "mailto:admin@tfc-kulob.tj"}
 
 # Рӯйхати рақамҳо барои гардиш ҳангоми Доставка
 PAYMENT_PHONE_NUMBERS = ["944975050", "754169090"]
+
+# Танзимоти пайвастшавӣ ба Admin
+ADMIN_URL = os.environ.get("ADMIN_URL", "http://127.0.0.1:5001")
+API_TOKEN = os.environ.get("API_TOKEN", "TFC_SECRET_KEY_2024")
 
 DATABASE_URL = os.environ.get("DATABASE_URL")
 if DATABASE_URL and DATABASE_URL.startswith("postgres://"):
@@ -99,25 +104,20 @@ def init_db() -> None:
             price TEXT NOT NULL,
             phone TEXT NOT NULL DEFAULT '',
             delivery_type TEXT NOT NULL DEFAULT '',
-            dostavka INTEGER NOT NULL DEFAULT 0,
             tip TEXT NOT NULL DEFAULT '',
             qabyl INTEGER NOT NULL DEFAULT 0,
             omoda INTEGER NOT NULL DEFAULT 0,
+            dostavka INTEGER NOT NULL DEFAULT 0,
             out_of_stock INTEGER NOT NULL DEFAULT 0,
-            refund REAL NOT NULL DEFAULT 0,
             estimated_time INTEGER DEFAULT 0,
-            delivery_latitude TEXT DEFAULT '',
-            delivery_longitude TEXT DEFAULT '',
-            delivery_address TEXT DEFAULT '',
-            payment_method TEXT DEFAULT 'online',
             created TEXT NOT NULL
         )
         """
     )
     cur.execute(f"CREATE TABLE IF NOT EXISTS reviews (id {id_type}, name TEXT NOT NULL, text TEXT NOT NULL, stars INTEGER NOT NULL, image_url TEXT, created TEXT NOT NULL)")
-    cur.execute(f"CREATE TABLE IF NOT EXISTS foods (id {id_type}, name TEXT NOT NULL UNIQUE, price TEXT NOT NULL, category TEXT NOT NULL, subcategory TEXT NOT NULL DEFAULT '', image_url TEXT NOT NULL DEFAULT '', description TEXT NOT NULL DEFAULT '', created TEXT NOT NULL)")
+    cur.execute(f"CREATE TABLE IF NOT EXISTS foods (id {id_type}, name TEXT NOT NULL UNIQUE, price TEXT NOT NULL, category TEXT NOT NULL, image_url TEXT NOT NULL DEFAULT '', description TEXT NOT NULL DEFAULT '', created TEXT NOT NULL)")
     cur.execute(f"CREATE TABLE IF NOT EXISTS push_subscriptions (id {id_type}, customer_id TEXT UNIQUE, subscription_json TEXT)")
-    cur.execute(f"CREATE TABLE IF NOT EXISTS aktsii (id {id_type}, title TEXT NOT NULL, price TEXT NOT NULL DEFAULT '', description TEXT NOT NULL DEFAULT '', image_url TEXT NOT NULL DEFAULT '', created TEXT NOT NULL)")
+    cur.execute(f"CREATE TABLE IF NOT EXISTS aktsii (id {id_type}, title TEXT NOT NULL, price TEXT NOT NULL DEFAULT '', description TEXT, image_url TEXT, created TEXT NOT NULL)")
     
     def col_exists(table, col):
         if DATABASE_URL:
@@ -125,6 +125,9 @@ def init_db() -> None:
             return cur.fetchone() is not None
         cur.execute(f"PRAGMA table_info({table})")
         return any(r[1] == col for r in cur.fetchall())
+
+    if not col_exists("aktsii", "price"):
+        cur.execute(f"ALTER TABLE aktsii ADD COLUMN price TEXT {'NOT NULL DEFAULT \'\'' if not DATABASE_URL else ''}")
 
     cur.execute(f"CREATE TABLE IF NOT EXISTS customers (id {id_type}, full_name TEXT NOT NULL, customer_id TEXT UNIQUE NOT NULL, created TEXT NOT NULL)")
 
@@ -372,342 +375,70 @@ def init_db() -> None:
 
 init_db()
 
-# Панели Админи мукаммал аз bilol.py
-ADMIN_HTML = r"""<!DOCTYPE html>
+ADMIN_HTML = """<!DOCTYPE html>
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="mobile-web-app-capable" content="yes">
-    <meta name="apple-mobile-web-app-capable" content="yes">
-    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-    <link rel="icon" type="image/jpeg" href="{{ url_for('static', filename='images/TFC.jpg') }}">
-    <title>Admin Panel | TFC</title>
+    <title>Панель Администратора | TFC</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
     <style>
-        @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&display=swap');
-        :root { --tfc: #e4002b; --bg-dark: #0f0f0f; --card-dark: #262626; --border-dark: #404040; }
-        body { font-family: 'DM Sans', sans-serif; background: var(--bg-dark); color: #e0e0e0; }
-        .header-bar { background: linear-gradient(135deg, #1a0a0c 0%, #c8102e 100%); box-shadow: 0 12px 40px rgba(196, 16, 46, 0.35); }
-        .stat-card { background: var(--card-dark); border: 1px solid var(--border-dark); border-radius: 1rem; padding: 0.3rem 0.8rem; display: flex; align-items: center; gap: 8px; }
-        .excel-table { width: 100%; border-collapse: separate; border-spacing: 0; }
-        .excel-table thead th { position: sticky; top: 0; background: rgba(196, 16, 46, 0.15); border-bottom: 3px solid var(--tfc); padding: 14px 16px; font-size: 0.7rem; text-transform: uppercase; color: #ff6b6b; z-index: 10; }
-        .excel-table td { border-bottom: 1px solid var(--border-dark); padding: 10px; color: #d0d0d0; }
-        .excel-table tbody tr:hover { background: rgba(196, 16, 46, 0.15); }
-        .excel-table tbody tr.completed { background: rgba(16, 185, 129, 0.1) !important; color: #10b981; }
-        .chip { border-radius: 9999px; padding: 0.35rem 0.85rem; font-size: 0.75rem; font-weight: 600; }
-        .tab-btn.active { color: white; border-color: var(--tfc); }
-        .modal-panel { background: var(--card-dark); border: 1px solid var(--border-dark); box-shadow: 0 25px 50px rgba(0,0,0,0.5); }
-        .toast { position: fixed; bottom: 24px; right: 24px; z-index: 100; padding: 14px 20px; border-radius: 14px; background: #1f2937; color: white; box-shadow: 0 10px 40px rgba(0,0,0,0.25); animation: toastIn 0.35s ease; }
-        @keyframes toastIn { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: none; } }
+        body { font-family: system-ui, sans-serif; background: #0f0f0f; color: #e0e0e0; }
+        .header-bar { background: linear-gradient(135deg, #1a0a0c 0%, #c8102e 100%); padding: 20px; }
+        .stat-card { background: rgba(255,255,255,0.08); padding: 15px; border-radius: 12px; text-align: center; }
+        .excel-table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+        .excel-table th { background: #c8102e; color: white; padding: 12px; text-align: left; }
+        .excel-table td { padding: 12px; border-bottom: 1px solid #333; }
+        .status-btn { padding: 8px; border-radius: 8px; cursor: pointer; }
     </style>
 </head>
-<body class="min-h-screen">
-    <header class="header-bar text-white p-4">
-        <div class="flex items-center justify-between flex-wrap gap-4">
-            <div class="flex items-center gap-4">
-                <img src="{{ url_for('static', filename='images/TFC.jpg') }}" class="w-12 h-12 rounded-2xl shadow-lg">
-                <div>
-                    <h1 class="text-xl font-bold">TFC Admin</h1>
-                    <p class="text-[9px] uppercase tracking-widest text-red-200">Tajik Fried Chicken</p>
-                </div>
-            </div>
-            <div class="flex items-center gap-3">
-                <div class="stat-card"><span id="total-orders" class="font-bold">0</span> <span class="text-[9px] uppercase opacity-60">Заказов</span></div>
-                <div class="stat-card"><span id="revenue-total" class="font-bold text-emerald-400">0</span> <span class="text-[9px] uppercase opacity-60">Сумма</span></div>
-                <a href="/" class="bg-white/10 hover:bg-white/20 px-4 py-2 rounded-xl text-sm transition">На сайт</a>
-            </div>
+<body>
+    <header class="header-bar text-white flex justify-between items-center">
+        <h1 class="text-2xl font-bold">Панель управления TFC</h1>
+        <div class="flex gap-4">
+            <div class="stat-card">Всего: <span id="total-count">0</span></div>
+            <a href="/" class="bg-white/10 px-4 py-2 rounded-lg">На сайт</a>
         </div>
     </header>
-
-    <main class="p-4 sm:p-6">
-        <div class="flex gap-4 mb-6 border-b border-gray-700">
-            <button onclick="switchTab('orders')" id="orders-tab-btn" class="tab-btn active px-6 py-3 font-semibold border-b-2 border-red-600">Заказы</button>
-            <button onclick="switchTab('foods')" id="foods-tab-btn" class="tab-btn px-6 py-3 font-semibold border-b-2 border-transparent text-gray-400">Меню</button>
-            <button onclick="switchTab('aktsii')" id="aktsii-tab-btn" class="tab-btn px-6 py-3 font-semibold border-b-2 border-transparent text-gray-400">Акции</button>
-        </div>
-
-        <!-- SECTION: ORDERS -->
-        <div id="orders-section" class="tab-content">
-            <div class="flex justify-between items-center mb-4">
-                <input type="text" id="order-search" oninput="renderOrders()" placeholder="Поиск заказов..." class="bg-gray-800 border border-gray-700 rounded-xl px-4 py-2 text-sm outline-none focus:border-red-500 w-full max-w-md">
-                <div class="flex gap-2">
-                    <button onclick="showHistory()" class="bg-indigo-600 px-4 py-2 rounded-xl text-sm font-bold"><i class="fas fa-chart-line mr-2"></i>Доход</button>
-                    <button onclick="clearAllOrders()" class="bg-red-600 px-4 py-2 rounded-xl text-sm font-bold"><i class="fas fa-trash"></i></button>
-                </div>
-            </div>
-            <div class="bg-gray-900 rounded-2xl border border-gray-800 overflow-x-auto">
-                <table class="excel-table">
-                    <thead>
-                        <tr><th>№</th><th>Имя</th><th>Телефон</th><th>Блюдо</th><th>Цена</th><th>Статус</th><th>Действие</th></tr>
-                    </thead>
-                    <tbody id="orders-table-body"></tbody>
-                </table>
-            </div>
-        </div>
-
-        <!-- SECTION: FOODS -->
-        <div id="foods-section" class="tab-content hidden">
-            <div class="flex justify-between items-center mb-4">
-                <h2 class="text-xl font-bold">Управление меню</h2>
-                <button onclick="showAddFoodModal()" class="bg-red-600 px-4 py-2 rounded-xl text-sm font-bold">+ Добавить</button>
-            </div>
-            <div class="bg-gray-900 rounded-2xl border border-gray-800 overflow-x-auto">
-                <table class="excel-table">
-                    <thead>
-                        <tr><th>Название</th><th>Категория</th><th>Цена</th><th>Действие</th></tr>
-                    </thead>
-                    <tbody id="foods-table-body"></tbody>
-                </table>
-            </div>
-        </div>
-
-        <!-- SECTION: AKTSII -->
-        <div id="aktsii-section" class="tab-content hidden">
-            <div class="flex justify-between items-center mb-4">
-                <h2 class="text-xl font-bold">Акции</h2>
-                <button onclick="showAddAktsiiModal()" class="bg-red-600 px-4 py-2 rounded-xl text-sm font-bold">+ Добавить</button>
-            </div>
-            <div class="bg-gray-900 rounded-2xl border border-gray-800 overflow-x-auto">
-                <table class="excel-table">
-                    <thead>
-                        <tr><th>Заголовок</th><th>Цена</th><th>Текст</th><th>Действие</th></tr>
-                    </thead>
-                    <tbody id="aktsii-table-body"></tbody>
-                </table>
-            </div>
+    <main class="p-8">
+        <div class="bg-gray-900 rounded-xl p-4 overflow-x-auto">
+            <table class="excel-table">
+                <thead>
+                    <tr><th>ID</th><th>Имя</th><th>Телефон</th><th>Тип</th><th>Блюдо</th><th>Цена</th><th>Принят</th><th>Готов</th></tr>
+                </thead>
+                <tbody id="orders-table"></tbody>
+            </table>
         </div>
     </main>
-
-    <!-- MODAL: ADD FOOD -->
-    <div id="foodModal" class="hidden fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-        <div class="modal-panel rounded-2xl w-full max-w-lg p-6">
-            <h3 id="food-modal-title" class="text-xl font-bold mb-4">Новое блюдо</h3>
-            <form id="food-form" class="space-y-4">
-                <input type="hidden" id="food-id">
-                <input type="text" id="food-name" placeholder="Название" class="w-full bg-gray-800 border border-gray-700 p-3 rounded-xl outline-none" required>
-                <select id="food-category" class="w-full bg-gray-800 border border-gray-700 p-3 rounded-xl outline-none">
-                    <option value="Меню">Меню</option>
-                    <option value="Пицца">Пицца</option>
-                    <option value="Суши">Суши</option>
-                    <option value="Фастфуд">Фастфуд</option>
-                    <option value="Летнее меню">Летнее меню</option>
-                    <option value="Комбо">Комбо</option>
-                </select>
-                <input type="text" id="food-price" placeholder="Цена (напр. 25 или 65/87)" class="w-full bg-gray-800 border border-gray-700 p-3 rounded-xl outline-none" required>
-                <textarea id="food-desc" placeholder="Описание" class="w-full bg-gray-800 border border-gray-700 p-3 rounded-xl outline-none" rows="3"></textarea>
-                <div class="flex gap-2">
-                    <button type="button" onclick="saveFood()" class="flex-1 bg-emerald-600 py-3 rounded-xl font-bold">Сохранить</button>
-                    <button type="button" onclick="hideModal('foodModal')" class="flex-1 bg-gray-700 py-3 rounded-xl font-bold">Отмена</button>
-                </div>
-            </form>
-        </div>
-    </div>
-
-    <!-- MODAL: REVENUE -->
-    <div id="historyModal" class="hidden fixed inset-0 bg-black/80 backdrop-blur-md z-50 flex items-center justify-center p-4">
-        <div class="modal-panel rounded-3xl w-full max-w-4xl p-8 max-h-[90vh] overflow-y-auto">
-            <div class="flex justify-between items-center mb-6">
-                <h3 class="text-2xl font-bold">Аналитика доходов</h3>
-                <button onclick="hideModal('historyModal')" class="text-2xl">&times;</button>
-            </div>
-            <canvas id="revenueChart" class="mb-8" style="height: 300px;"></canvas>
-            <div id="history-content"></div>
-        </div>
-    </div>
-
-    <div id="toast-host"></div>
-
     <script>
-        let orders = [];
-        let foods = [];
-        let aktsii = [];
-        const sound = new Audio('/static/music.mp3');
-
-        async function init() {
-            await Promise.all([fetchOrders(), fetchFoods(), fetchAktsii()]);
-            setInterval(fetchOrders, 3000);
-        }
-
-        async function fetchOrders() {
+        async function loadOrders() {
             const res = await fetch('/api/orders/since?last_id=0');
             const data = await res.json();
-            if (data.ok) {
-                if (data.orders.length > orders.length && orders.length > 0) sound.play().catch(e => {});
-                orders = data.orders.reverse();
-                renderOrders();
-            }
-        }
-
-        function renderOrders() {
-            const tbody = document.getElementById('orders-table-body');
-            const q = document.getElementById('order-search').value.toLowerCase();
+            const tbody = document.getElementById('orders-table');
             tbody.innerHTML = '';
-            let total = 0;
-            
-            orders.filter(o => o.customer.toLowerCase().includes(q) || o.food.toLowerCase().includes(q)).forEach((o, i) => {
-                const isDone = o.omoda;
-                total += parseFloat(o.price) || 0;
+            data.orders.reverse().forEach(o => {
                 tbody.innerHTML += `
-                    <tr class="${isDone ? 'completed' : ''}">
-                        <td class="text-xs opacity-50">${o.id}</td>
-                        <td class="font-bold">${o.customer}</td>
-                        <td class="text-yellow-400 font-mono">${o.phone}</td>
+                    <tr>
+                        <td>${o.id}</td>
+                        <td>${o.customer}</td>
+                        <td>${o.phone}</td>
+                        <td>${o.delivery_type === 'delivery' ? '🚀 Доставка' : '🛍️ Самовывоз'}</td>
                         <td>${o.food}</td>
-                        <td class="font-bold text-emerald-400">${o.price}с</td>
-                        <td>
-                            <button onclick="toggleStatus(${o.id}, 'qabyl', ${!o.qabyl})" class="p-2 rounded-lg ${o.qabyl ? 'bg-emerald-600/30' : 'bg-red-600/20'}"><i class="fas ${o.qabyl ? 'fa-check' : 'fa-clock'}"></i></button>
-                            <button onclick="toggleStatus(${o.id}, 'omoda', ${!o.omoda})" class="p-2 rounded-lg ${o.omoda ? 'bg-emerald-600/30' : 'bg-amber-600/20'}"><i class="fas fa-fire"></i></button>
-                        </td>
-                        <td><button onclick="deleteOrder(${o.id})" class="text-red-500"><i class="fas fa-trash"></i></button></td>
+                        <td>${o.price}с</td>
+                        <td><button onclick="updateStatus(${o.id}, 'qabyl', ${!o.qabyl})" class="${o.qabyl ? 'text-green-500':'text-red-500'} text-xl">${o.qabyl ? '✅':'⏳'}</button></td>
+                        <td><button onclick="updateStatus(${o.id}, 'omoda', ${!o.omoda})" class="${o.omoda ? 'text-green-500':'text-yellow-500'}">${o.omoda ? '✅':'🔥'}</button></td>
                     </tr>`;
             });
-            document.getElementById('total-orders').textContent = orders.length;
-            document.getElementById('revenue-total').textContent = total.toFixed(0);
+            document.getElementById('total-count').textContent = data.orders.length;
         }
-
-        async function toggleStatus(id, field, val) {
-            await fetch('/api/orders/update-status', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({id, field, value: val ? 1 : 0})
-            });
-            fetchOrders();
+        async function updateStatus(id, field, val) {
+            const body = {id, field, value:val};
+            await fetch('/api/orders/update-status', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body) });
+            loadOrders();
         }
-
-        async function deleteOrder(id) {
-            if (confirm('Удалить заказ?')) {
-                await fetch(`/api/orders/delete/${id}`, { method: 'DELETE' });
-                fetchOrders();
-            }
-        }
-
-        // FOODS LOGIC
-        async function fetchFoods() {
-            const res = await fetch('/api/foods/list');
-            const data = await res.json();
-            if (data.ok) { foods = data.foods; renderFoods(); }
-        }
-
-        function renderFoods() {
-            const tbody = document.getElementById('foods-table-body');
-            tbody.innerHTML = foods.map(f => `
-                <tr>
-                    <td>${f.name}</td>
-                    <td><span class="chip bg-gray-800">${f.category}</span></td>
-                    <td class="font-bold text-emerald-400">${f.price}с</td>
-                    <td>
-                        <button onclick='editFood(${JSON.stringify(f)})' class="text-blue-400 mr-3"><i class="fas fa-edit"></i></button>
-                        <button onclick="deleteFood(${f.id})" class="text-red-400"><i class="fas fa-trash"></i></button>
-                    </td>
-                </tr>
-            `).join('');
-        }
-
-        function showAddFoodModal() {
-            document.getElementById('food-form').reset();
-            document.getElementById('food-id').value = '';
-            document.getElementById('food-modal-title').textContent = 'Новое блюдо';
-            document.getElementById('foodModal').classList.remove('hidden');
-        }
-
-        function editFood(f) {
-            document.getElementById('food-id').value = f.id;
-            document.getElementById('food-name').value = f.name;
-            document.getElementById('food-category').value = f.category;
-            document.getElementById('food-price').value = f.price;
-            document.getElementById('food-desc').value = f.description || '';
-            document.getElementById('food-modal-title').textContent = 'Редактировать';
-            document.getElementById('foodModal').classList.remove('hidden');
-        }
-
-        async function saveFood() {
-            const id = document.getElementById('food-id').value;
-            const formData = new FormData();
-            formData.append('name', document.getElementById('food-name').value);
-            formData.append('category', document.getElementById('food-category').value);
-            formData.append('price', document.getElementById('food-price').value);
-            formData.append('description', document.getElementById('food-desc').value);
-
-            const url = id ? `/api/foods/update/${id}` : '/api/foods/add';
-            const res = await fetch(url, { method: id ? 'PUT' : 'POST', body: formData });
-            if ((await res.json()).ok) {
-                hideModal('foodModal');
-                fetchFoods();
-                toast(id ? 'Обновлено' : 'Добавлено');
-            }
-        }
-
-        async function deleteFood(id) {
-            if (confirm('Удалить блюдо?')) {
-                await fetch(`/api/foods/delete/${id}`, { method: 'DELETE' });
-                fetchFoods();
-            }
-        }
-
-        // AKTSII LOGIC
-        async function fetchAktsii() {
-            const res = await fetch('/api/aktsii/list');
-            const data = await res.json();
-            if (data.ok) { aktsii = data.aktsii; renderAktsii(); }
-        }
-
-        function renderAktsii() {
-            const tbody = document.getElementById('aktsii-table-body');
-            tbody.innerHTML = aktsii.map(a => `
-                <tr>
-                    <td class="font-bold">${a.title}</td>
-                    <td class="text-emerald-400">${a.price}</td>
-                    <td class="text-xs opacity-60">${a.description}</td>
-                    <td><button onclick="deleteAktsii(${a.id})" class="text-red-400"><i class="fas fa-trash"></i></button></td>
-                </tr>
-            `).join('');
-        }
-
-        // HELPERS
-        function switchTab(t) {
-            document.querySelectorAll('.tab-content').forEach(el => el.classList.add('hidden'));
-            document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active', 'border-red-600'));
-            document.getElementById(t + '-section').classList.remove('hidden');
-            document.getElementById(t + '-tab-btn').classList.add('active', 'border-red-600');
-        }
-
-        function hideModal(id) { document.getElementById(id).classList.add('hidden'); }
-
-        function toast(m) {
-            const h = document.getElementById('toast-host');
-            const t = document.createElement('div');
-            t.className = 'toast';
-            t.textContent = m;
-            h.appendChild(t);
-            setTimeout(() => t.remove(), 3000);
-        }
-
-        async function showHistory() {
-            const code = prompt("Введите код доступа:");
-            if (code !== "159951.tfc") return alert("Доступ запрещен!");
-            
-            const res = await fetch('/api/stats/daily-revenue');
-            const data = await res.json();
-            if (!data.ok) return;
-            
-            document.getElementById('historyModal').classList.remove('hidden');
-            const ctx = document.getElementById('revenueChart').getContext('2d');
-            new Chart(ctx, {
-                type: 'line',
-                data: {
-                    labels: data.stats.map(s => s.day).reverse(),
-                    datasets: [{ label: 'Выручка', data: data.stats.map(s => s.total).reverse(), borderColor: '#10b981', tension: 0.4 }]
-                }
-            });
-        }
-
-        init();
+        setInterval(loadOrders, 3000); loadOrders();
     </script>
-</body></html>
-"""
+</body></html>"""
 
 FOOD_DETAIL_TEMPLATE = r"""
 <!DOCTYPE html>
@@ -4680,6 +4411,15 @@ def api_send_code():
     
     return jsonify({"ok": True, "debug_code": code})
 
+def send_real_sms(phone, message):
+    """
+    Ин функсия барои фиристодани SMS-и ҳақиқӣ тавассути API мебошад.
+    Шумо бояд дар ин ҷо коди сервиси худро илова кунед.
+    """
+    # import requests
+    # requests.post("https://api.sms-provider.com/send", data={"to": phone, "msg": message})
+    pass
+
 @app.route("/api/auth/verify-code", methods=["POST"])
 def api_verify_code():
     data = request.get_json() or {}
@@ -4714,32 +4454,21 @@ def api_orders_new():
 
     if not tip:
         tip = "Наличными 💵" if payment_method == "cash" else f"Картой 💳 ({payment_phone})"
-    created = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    conn = get_db_connection()
-    cur = conn.cursor() # Ensure timeout is applied here
-    # Insert bo hamai maydonho baroi durust namoyish shudan dar admin
-    cur.execute(f"""
-        INSERT INTO orders (customer, customer_id, food, price, phone, delivery_type, tip, delivery_latitude, delivery_longitude, delivery_address, payment_method, qabyl, omoda, dostavka, created)
-        VALUES ({qm()},{qm()},{qm()},{qm()},{qm()},{qm()},{qm()},{qm()},{qm()},{qm()},{qm()}, 0, 0, 0, {qm()})
-    """, (customer, customer_id, food, price, phone, delivery_type, tip, delivery_latitude, delivery_longitude, delivery_address, payment_method, created))
-    order_id = cur.lastrowid
     
-    # Сабти заказ дар таърихи доимӣ (Архив), то пас аз нест кардан боқӣ монад
-    cur.execute(
-        f"INSERT INTO full_order_history (customer, customer_id, food, price, phone, delivery_type, tip, payment_method, created) VALUES ({qm()},{qm()},{qm()},{qm()},{qm()},{qm()},{qm()},{qm()},{qm()})",
-        (customer, customer_id, food, price, phone, delivery_type, tip, payment_method, created)
-    )
+    data['tip'] = tip # Иловаи tip ба маълумот барои Admin
 
-    # Сабти маблағ дар таърихи доимӣ
+    # Фиристодани фармоиш ба Admin Panel тавассути API
     try:
-        p_clean = "".join(c for c in str(price).replace(',', '.') if c.isdigit() or c == '.')
-        amount = float(p_clean) if p_clean else 0.0
-        cur.execute(f"INSERT INTO revenue_history (amount, day, customer_id) VALUES ({qm()}, {qm()}, {qm()})", (amount, datetime.now().strftime("%Y-%m-%d"), customer_id))
-    except: pass
-
-    conn.commit()
-    conn.close()
-    return jsonify({"ok": True, "order_id": order_id})
+        resp = requests.post(
+            f"{ADMIN_URL}/api/orders/new",
+            json=data,
+            headers={"Authorization": f"Bearer {API_TOKEN}"},
+            timeout=10
+        )
+        return jsonify(resp.json())
+    except Exception as e:
+        print(f"Connection error to Admin: {e}")
+        return jsonify({"ok": False, "error": "admin_not_reachable"}), 500
 
 @app.route("/api/get-next-payment-phone")
 def api_get_next_phone():
@@ -4782,15 +4511,16 @@ def api_orders_update_status():
 @app.route("/api/orders/customer-status", methods=["GET"])
 def api_orders_customer_status():
     customer_id = request.args.get("customer_id", "")
+    # Гирифтани статус аз Admin Panel
     try:
-        conn = get_db_connection(); cur = conn.cursor()
-        cur.execute(f"SELECT id, food, qabyl, omoda, phone, delivery_type, dostavka, out_of_stock, refund, estimated_time, price FROM orders WHERE customer_id = {qm()} ORDER BY id DESC LIMIT 1", (customer_id,))
-        r = cur.fetchone(); conn.close()
-        orders = [{"id": r[0], "food": r[1], "qabyl": bool(r[2]), "omoda": bool(r[3]), "phone": r[4], "delivery_type": r[5], "dostavka": int(r[6]), "out_of_stock": bool(r[7]), "refund": r[8] if r[8] is not None else 0, "estimated_time": r[9] if len(r) > 9 else 0, "price": r[10] if len(r) > 10 else "0"}] if r else []
-        return jsonify({"ok": True, "orders": orders})
+        resp = requests.get(
+            f"{ADMIN_URL}/api/orders/customer-status?customer_id={customer_id}",
+            headers={"Authorization": f"Bearer {API_TOKEN}"},
+            timeout=5
+        )
+        return jsonify(resp.json())
     except Exception as e:
-        print(f"Status Error: {e}")
-        return jsonify({"ok": False, "error": str(e)})
+        return jsonify({"ok": False, "error": "status_api_failed"})
 
 @app.route("/api/foods/list", methods=["GET"])
 def api_foods_list():

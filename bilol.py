@@ -17,6 +17,8 @@ VAPID_PUBLIC_KEY = "BCX7B8_p9v7Z-S-l1M0W4Y1Z2X3C4V5B6N7M8L9K0J1I2H3G4F5E6D7C8B9A
 VAPID_PRIVATE_KEY = "m1N2B3V4C5X6Z7A8S9D0F1G2H3J4K5L6m1N2B3V4C5X"
 VAPID_CLAIMS = {"sub": "mailto:admin@tfc-kulob.tj"}
 
+API_TOKEN = os.environ.get("API_TOKEN", "TFC_SECRET_KEY_2024")
+
 DB_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "tfc_admin.db"))
 DATABASE_URL = os.environ.get("DATABASE_URL")
 if DATABASE_URL and DATABASE_URL.startswith("postgres://"):
@@ -1132,10 +1134,10 @@ HTML = r"""<!DOCTYPE html>
         let orders = [];
         let filterMode = 'all';
         let revenueChart = null;
-        let lastSeenOrderId = 0; // Initialize here, will be updated after loading orders
         let accessTarget = null;
         let confirmAction = null;
         let isAuthorized = false;
+        let lastSeenOrderId = 0;
 
         const newOrderSound = new Audio('/static/music.mp3'); // Файли садоӣ бояд дар папкаи static бошад
 
@@ -1183,10 +1185,6 @@ HTML = r"""<!DOCTYPE html>
                 }
             } catch (e) {}
             orders = [];
-            // After loading orders, set lastSeenOrderId to the max ID found
-            if (orders.length > 0) {
-                lastSeenOrderId = Math.max(...orders.map(o => o.id));
-            }
             saveOrders();
         }
 
@@ -1968,7 +1966,6 @@ HTML = r"""<!DOCTYPE html>
             const data = await res.json();
             const newOrders = Array.isArray(data.orders) ? data.orders : [];
             if (newOrders.length === 0) return;
-            console.log("Fetched new orders from API:", newOrders); // Debugging line
 
             // Филтр кардани танҳо заказҳои воқеан нав
             const trulyNewOrders = newOrders.filter(o => !orders.some(existing => existing.id === o.id));
@@ -1998,7 +1995,6 @@ HTML = r"""<!DOCTYPE html>
                 if (o.id > lastSeenOrderId) lastSeenOrderId = o.id;
             }
 
-            console.log("Truly new orders after filtering:", trulyNewOrders); // Debugging line
             renderTable();
 
             // Хабарнома (Toast) танҳо барои заказҳои нав ва агар боркунии аввалия набошад
@@ -2517,6 +2513,10 @@ def api_orders_new():
     if request.method == "OPTIONS":
         return ("", 204)
 
+    # Тафтиши Токен барои амният
+    if request.headers.get("Authorization") != f"Bearer {API_TOKEN}":
+        return jsonify({"ok": False, "error": "unauthorized"}), 401
+
     data = request.get_json(silent=True) or {}
     customer = (data.get("customer") or "Неизвестно").strip()
     customer_id = str(data.get("customer_id") or "").strip()
@@ -2528,13 +2528,14 @@ def api_orders_new():
     delivery_longitude = str(data.get("delivery_longitude") or "").strip()
     delivery_address = str(data.get("delivery_address") or "").strip()
     payment_method = str(data.get("payment_method") or "online").strip()
+    tip = str(data.get("tip") or "").strip()
     created = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
     conn = get_db_connection()
     cur = conn.cursor()
     cur.execute(
-        f"INSERT INTO orders (customer, customer_id, food, price, phone, delivery_type, delivery_latitude, delivery_longitude, delivery_address, payment_method, qabyl, omoda, created) VALUES ({qm()},{qm()},{qm()},{qm()},{qm()},{qm()},{qm()},{qm()},{qm()},{qm()}, 0, 0, {qm()})",
-        (customer, customer_id, food, price, phone, delivery_type, delivery_latitude, delivery_longitude, delivery_address, payment_method, created)
+        f"INSERT INTO orders (customer, customer_id, food, price, phone, delivery_type, delivery_latitude, delivery_longitude, delivery_address, payment_method, tip, qabyl, omoda, created) VALUES ({qm()},{qm()},{qm()},{qm()},{qm()},{qm()},{qm()},{qm()},{qm()},{qm()},{qm()}, 0, 0, {qm()})",
+        (customer, customer_id, food, price, phone, delivery_type, delivery_latitude, delivery_longitude, delivery_address, payment_method, tip, created)
     )
     order_id = cur.lastrowid
 
@@ -2791,6 +2792,10 @@ def api_order_delete_db(order_id):
 
 @app.route("/api/orders/customer-status", methods=["GET"])
 def api_orders_customer_status():
+    # Тафтиши Токен
+    if request.headers.get("Authorization") != f"Bearer {API_TOKEN}":
+        return jsonify({"ok": False, "error": "unauthorized"}), 401
+
     customer_id = str(request.args.get("customer_id", "")).strip()
     if not customer_id:
         return jsonify({"ok": True, "orders": []})
