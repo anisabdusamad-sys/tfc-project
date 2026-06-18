@@ -15,7 +15,7 @@ UPLOAD_FOLDER = 'static/images'
 
 # Танзимоти API барои пайваст шудан ба Admin
 API_KEY = "TFC_SECRET_SECURE_KEY_2026"
-ADMIN_URL = "https://your-admin-panel-url.render.com" # ИНРО БАЪДИ DEPLOY ИВАЗ КУНЕД
+ADMIN_URL = "https://tfc-admin-panel.onrender.com" # ИНРО БАЪДИ DEPLOY ИВАЗ КУНЕД
 
 # Анбор барои нигоҳдории кодҳои тасдиқ (Phone: Code)
 verification_codes = {}
