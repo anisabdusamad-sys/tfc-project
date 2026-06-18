@@ -2759,7 +2759,7 @@ def api_orders_update_status():
     conn.close()
 
     # Фиристодани Push агар статус "ҳа" (1) шавад
-    if updated and db_value == 1:
+    if updated: # Push бояд барои ҳама гуна навсозии муҳим фиристода шавад
         conn = sqlite3.connect(DB_PATH, timeout=20); cur = conn.cursor()
         cur.execute("SELECT subscription_json FROM push_subscriptions WHERE customer_id = ?", (customer_id,))
         sub_row = cur.fetchone()
@@ -2767,59 +2767,66 @@ def api_orders_update_status():
             sub_info = json.loads(sub_row[0])
             # Гирифтани маблағ ва рефунд барои муқоиса
             cur.execute("SELECT refund, price FROM orders WHERE id = ?", (order_id,))
-            ref_val, orig_price_str = cur.fetchone()
+            order_data = cur.fetchone()
+            if not order_data:
+                conn.close()
+                return jsonify({"ok": updated})
+
+            ref_val, orig_price_str, qabyl_status, omoda_status, dostavka_status, out_of_stock_status, estimated_time_val, del_type, current_food_name = order_data
             
+            # Гирифтани payment_method барои паёми дуруст
+            cur.execute("SELECT payment_method FROM orders WHERE id = ?", (order_id,))
+            payment_method = cur.fetchone()[0] if cur.fetchone() else 'online'
+
             # Тоза кардани нархи аслӣ барои муқоиса
             try:
                 p_clean = "".join(c for c in str(orig_price_str).replace(',', '.') if c.isdigit() or c == '.')
                 orig_p = float(p_clean) if p_clean else 0.0
             except: orig_p = 0.0
+
+            msg = "Статус заказа обновлен." # Паёми пешфарз
             
             # Находим названия блюд, которые были зачеркнуты (<s>...</s>)
-            struck_items = re.findall(r'<s>(.*?)</s>', food_name)
+            struck_items = re.findall(r'<s>(.*?)</s>', current_food_name)
             struck_str = f" \"{', '.join(struck_items)}\"" if struck_items else ""
 
-            if field == 'qabyl':
-                t_val = estimated_time if estimated_time is not None else old_est_time
-                time_str = ""
-                if t_val:
-                    if del_type == 'delivery':
-                        time_str = f" Ваш заказ будет готов и доставлен примерно через {t_val} минут."
-                    else:
-                        time_str = f" Ваш заказ будет готов примерно через {t_val} минут."
-
-                if ref_val >= orig_p and orig_p > 0:
-                    msg = f"К сожалению, нет никаких блюд и мы вернем ваши деньги: {ref_val} смн."
-                elif ref_val > 0:
-                    msg = f"Извините, блюд{struck_str} нет в наличии, и мы вернем вам ваши деньги: {ref_val} смн."
-                else:
-                    msg = f"Заказ принят!{time_str} Пожалуйста, переведите оплату на номер 754169090."
-            elif field == 'out_of_stock':
-                if ref_val >= orig_p and orig_p > 0:
-                    msg = f"К сожалению, нет никаких блюд и мы вернем ваши деньги: {ref_val} смн."
-                else:
-                    msg = f"Извините, блюд{struck_str} нет в наличии, и мы вернем вам ваши деньги: {ref_val} смн."
-            elif field == 'omoda':
-                # Пешгирӣ аз фиристодани паёми "Готов", агар заказ пурра бекор шуда бошад
-                if ref_val >= orig_p and orig_p > 0:
-                    conn.close()
-                    return jsonify({"ok": updated})
+            # Афзалият додани паёмҳо:
+            # 1. Агар пурра аз сабаби набудани маҳсулот бекор карда шуда бошад
+            if out_of_stock_status and ref_val >= orig_p and orig_p > 0:
+                msg = f"К сожалению, нет никаких блюд и мы вернем ваши деньги: {ref_val} смн. ❌"
+            # 2. Агар қисман аз сабаби набудани маҳсулот бекор карда шуда бошад
+            elif out_of_stock_status and ref_val > 0:
+                msg = f"Извините, блюд{struck_str} нет в наличии, и мы вернем вам ваши деньги: {ref_val} смн. ❌"
+            # 3. Ҳолати расонидан
+            elif dostavka_status == 1:
+                msg = "Мы везем ваш заказ! 🚀🚗"
+            elif dostavka_status == 2:
+                msg = "Ваш заказ доставлен! Приятного аппетита! 🏠✅"
+            # 4. Ҳолати омода
+            elif omoda_status:
                 if del_type == 'pickup':
                     msg = "Ваш заказ готов! Пожалуйста, заберите свое блюдо."
                 else:
                     msg = "Ваш заказ готов! Через несколько минут мы его доставим. 🚀"
-            elif field == 'dostavka':
-                if db_value == 1:
-                    msg = "Мы везем ваш заказ! 🚀🚗"
-                elif db_value == 2:
-                    msg = "Ваш заказ доставлен! Приятного аппетита! 🏠✅"
-                else:
-                    msg = "Статус доставки обновлен."
+            # 5. Ҳолати қабулшуда
+            elif qabyl_status:
+                time_str = ""
+                if estimated_time_val:
+                    if del_type == 'delivery':
+                        time_str = f" Ваш заказ будет готов и доставлен примерно через {estimated_time_val} минут."
+                    else:
+                        time_str = f" Ваш заказ будет готов примерно через {estimated_time_val} минут."
+                
+                if payment_method == 'online':
+                    msg = f"Заказ принят!{time_str} Пожалуйста, переведите оплату на номер 754169090."
+                else: # cash
+                    msg = f"Заказ принят!{time_str}"
+            # 6. Пешфарз: интизорӣ
             else:
-                msg = "Статус заказа обновлен."
+                msg = "Ваш заказ <b>отправлен</b>! ✅"
 
             # Тоза кардани тегҳои <s> аз рӯйхати хӯрокҳо барои хабарномаи тоза
-            display_food = re.sub(r'<s>.*?</s>', '', food_name)
+            display_food = re.sub(r'<s>.*?</s>', '', current_food_name)
             display_food = re.sub(r',\s*,', ',', display_food).strip().strip(',').strip()
 
             try:
@@ -2827,7 +2834,6 @@ def api_orders_update_status():
                         vapid_private_key=VAPID_PRIVATE_KEY, vapid_claims=VAPID_CLAIMS)
             except WebPushException: pass
         conn.close()
-
     return jsonify({"ok": updated})
 
 @app.route("/api/orders/clear-all", methods=["POST"])

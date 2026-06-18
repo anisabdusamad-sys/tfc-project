@@ -4162,53 +4162,65 @@ HTML_TEMPLATE = r"""
                 const last = data.orders[data.orders.length - 1];
                 
                 let statusType = "pending";
-                let deliveryMsg = last.delivery_type === 'delivery' ? 'Доставка' : 'Самовывоз';
-                let statusText = "Ваш заказ <b>отправлен</b>! ✅";
+                let statusText = ""; 
                 let ok = false;
 
-                let oosPart = "";
                 // Тафтиш: Оё ҳамаи хӯрокҳо хат зада шудаанд?
                 const cleanPrice = parseFloat(String(last.price || 0).replace(',', '.').replace(/[^0-9.]/g, ''));
+                
+                // 1. Афзалияти баландтарин: Агар пурра аз сабаби набудани маҳсулот бекор карда шуда бошад
                 if (last.out_of_stock && parseFloat(last.refund) >= cleanPrice && cleanPrice > 0) {
                     statusType = "cancelled_oos";
                     statusText = `К сожалению, нет никаких блюд и мы вернем ваши деньги: ${last.refund} смн. ❌`;
-                } else if (last.out_of_stock) {
+                } 
+                // 2. Афзалияти навбатӣ: Агар қисман аз сабаби набудани маҳсулот бекор карда шуда бошад
+                else if (last.out_of_stock) {
                     const missingItems = [];
                     const regex = /<s>(.*?)<\/s>/g;
                     let match;
                     while ((match = regex.exec(last.food)) !== null) {
                         missingItems.push(match[1]);
                     }
+                    let refundTxt = "";
                     if (missingItems.length > 0) {
-                        const refundTxt = last.refund > 0 ? ` Из-за того, что у нас нет такого блюда, мы вернем вам ваши деньги: ${last.refund} сомони.` : "";
-                        oosPart = `<br><span class="text-red-500 font-bold">Извините, "${missingItems.join(", ")}" нет в наличии.${refundTxt} ❌</span>`;
+                        refundTxt = last.refund > 0 ? ` Из-за того, что у нас нет такого блюда, мы вернем вам ваши деньги: ${last.refund} сомони.` : "";
                     }
+                    statusText = `Извините, блюд "${missingItems.join(", ")}" нет в наличии.${refundTxt} ❌`;
+                    statusType = "partially_oos"; // Навъи ҳолати нав барои равшанӣ
                 }
-
-                if (statusText.includes("К сожалению")) {
-                    // Матни махсус аллакай таъин шудааст
-                } else if (last.dostavka === 1) {
+                // 3. Баъдан, ҳолати расониданро тафтиш кунед
+                else if (last.dostavka === 1) {
                     statusText = "Мы везем ваш заказ! 🚀🚗";
                     statusType = "shipping";
                 } else if (last.dostavka === 2) {
                     statusText = "Ваш заказ доставлен! Приятного аппетита! 🏠✅";
-                    statusType = "ready"; ok = true;
-                } else if (last.omoda) {
+                    statusType = "delivered"; // Аз "ready" ба "delivered" барои равшанӣ тағйир дода шуд
+                    ok = true;
+                } 
+                // 4. Баъдан, ҳолати омода (omoda) -ро тафтиш кунед
+                else if (last.omoda) {
                     statusText = last.delivery_type === 'pickup' ? "Ваш заказ готов! Пожалуйста, заберите свое блюдо." : "Ваш заказ готов! Через несколько минут мы его доставим. 🚀";
                     statusType = "ready"; ok = true;
-                } else if (last.qabyl) {
+                } 
+                // 5. Баъдан, ҳолати қабулшуда (qabyl) -ро тафтиш кунед
+                else if (last.qabyl) {
                     let timeMsg = "";
                     if (last.estimated_time) {
                         timeMsg = last.delivery_type === 'delivery' ? 
                             `<br><b>Ваш заказ будет готов и прислан через ${last.estimated_time} минут.</b>` : 
                             `<br><b>Ваш заказ будет готов примерно через ${last.estimated_time} минут.</b>`;
                     }
-                    statusText = `Заказ <b>принят</b> поваром! 👨‍🍳${timeMsg}`;
+                    if (last.payment_method === 'online') {
+                        statusText = `Заказ <b>принят</b> поваром! 👨‍🍳${timeMsg} Пожалуйста, переведите оплату на номер 754169090.`;
+                    } else { // cash
+                        statusText = `Заказ <b>принят</b> поваром! 👨‍🍳${timeMsg}`;
+                    }
                     statusType = "accepted";
                 }
-
-                if (statusType === "pending" || statusType === "accepted") {
-                    statusText += oosPart;
+                // 6. Пешфарз: интизорӣ
+                else {
+                    statusText = "Ваш заказ <b>отправлен</b>! ✅";
+                    statusType = "pending";
                 }
 
                 // Сохтани калиди беназир: ID-и заказ + статус
