@@ -1,11 +1,9 @@
 import socket
 import sqlite3
-import psycopg2
-import psycopg2.extras
 import json
 import random
-import requests
 import os
+import requests
 from flask import Flask, render_template_string, url_for, request, jsonify, send_from_directory, redirect
 from datetime import datetime
 import re
@@ -14,6 +12,10 @@ from werkzeug.utils import secure_filename
 
 app = Flask(__name__)
 UPLOAD_FOLDER = 'static/images'
+
+# Танзимоти API барои пайваст шудан ба Admin
+API_KEY = "TFC_SECRET_SECURE_KEY_2026"
+ADMIN_URL = "https://your-admin-panel-url.render.com" # ИНРО БАЪДИ DEPLOY ИВАЗ КУНЕД
 
 # Анбор барои нигоҳдории кодҳои тасдиқ (Phone: Code)
 verification_codes = {}
@@ -27,52 +29,20 @@ VAPID_CLAIMS = {"sub": "mailto:admin@tfc-kulob.tj"}
 # Рӯйхати рақамҳо барои гардиш ҳангоми Доставка
 PAYMENT_PHONE_NUMBERS = ["944975050", "754169090"]
 
-# Танзимоти пайвастшавӣ ба Admin
-ADMIN_URL = os.environ.get("ADMIN_URL", "http://127.0.0.1:5001")
-API_TOKEN = os.environ.get("API_TOKEN", "TFC_SECRET_KEY_2024")
-
-DATABASE_URL = os.environ.get("DATABASE_URL")
-if DATABASE_URL and DATABASE_URL.startswith("postgres://"):
-    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
-
-def get_db_connection():
-    if DATABASE_URL:
-        return psycopg2.connect(DATABASE_URL, sslmode='require')
-    return sqlite3.connect(DB_PATH, timeout=20)
-
-def get_cursor(conn):
-    if DATABASE_URL:
-        return conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-    conn.row_factory = sqlite3.Row
-    return conn.cursor()
-
-def qm():
-    return "%s" if DATABASE_URL else "?"
-
-def to_dict(row, cursor):
-    if not row: return None
-    if hasattr(row, 'keys'): # sqlite3.Row
-        return dict(row)
-    # Postgres or fallback
-    return {desc[0]: row[i] for i, desc in enumerate(cursor.description)}
-
 def get_setting(key, default_value=None):
     """Гирифтани танзимот аз база"""
-    conn = get_db_connection()
+    conn = sqlite3.connect(DB_PATH, timeout=20)
     cur = conn.cursor()
-    cur.execute(f"SELECT value FROM settings WHERE key = {qm()}", (key,))
+    cur.execute("SELECT value FROM settings WHERE key = ?", (key,))
     result = cur.fetchone()
     conn.close()
     return result[0] if result else default_value
 
 def set_setting(key, value):
     """Захира кардани танзимот дар база"""
-    conn = get_db_connection()
+    conn = sqlite3.connect(DB_PATH, timeout=20)
     cur = conn.cursor()
-    if DATABASE_URL:
-        cur.execute("INSERT INTO settings (key, value) VALUES (%s, %s) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value", (key, str(value)))
-    else:
-        cur.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, str(value)))
+    cur.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, str(value)))
     conn.commit()
     conn.close()
 
@@ -88,16 +58,14 @@ def get_next_payment_phone_for_rotation():
 DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tfc_admin.db")
 
 def init_db() -> None:
-    conn = get_db_connection()
+    conn = sqlite3.connect(DB_PATH, timeout=20) # Ensure timeout is applied here
     cur = conn.cursor()
-
-    id_type = "SERIAL PRIMARY KEY" if DATABASE_URL else "INTEGER PRIMARY KEY AUTOINCREMENT"
     
     # 1. Аввал ҷадвалҳоро месозем
     cur.execute(
-        f"""
+        """
         CREATE TABLE IF NOT EXISTS orders (
-            id {id_type},
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
             customer TEXT NOT NULL,
             customer_id TEXT NOT NULL DEFAULT '',
             food TEXT NOT NULL,
@@ -114,42 +82,38 @@ def init_db() -> None:
         )
         """
     )
-    cur.execute(f"CREATE TABLE IF NOT EXISTS reviews (id {id_type}, name TEXT NOT NULL, text TEXT NOT NULL, stars INTEGER NOT NULL, image_url TEXT, created TEXT NOT NULL)")
-    cur.execute(f"CREATE TABLE IF NOT EXISTS foods (id {id_type}, name TEXT NOT NULL UNIQUE, price TEXT NOT NULL, category TEXT NOT NULL, image_url TEXT NOT NULL DEFAULT '', description TEXT NOT NULL DEFAULT '', created TEXT NOT NULL)")
-    cur.execute(f"CREATE TABLE IF NOT EXISTS push_subscriptions (id {id_type}, customer_id TEXT UNIQUE, subscription_json TEXT)")
-    cur.execute(f"CREATE TABLE IF NOT EXISTS aktsii (id {id_type}, title TEXT NOT NULL, price TEXT NOT NULL DEFAULT '', description TEXT, image_url TEXT, created TEXT NOT NULL)")
-    
-    def col_exists(table, col):
-        if DATABASE_URL:
-            cur.execute("SELECT column_name FROM information_schema.columns WHERE table_name=%s AND column_name=%s", (table, col))
-            return cur.fetchone() is not None
-        cur.execute(f"PRAGMA table_info({table})")
-        return any(r[1] == col for r in cur.fetchall())
+    cur.execute("CREATE TABLE IF NOT EXISTS reviews (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, text TEXT NOT NULL, stars INTEGER NOT NULL, image_url TEXT, created TEXT NOT NULL)")
+    cur.execute("CREATE TABLE IF NOT EXISTS foods (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE, price TEXT NOT NULL, category TEXT NOT NULL, image_url TEXT NOT NULL DEFAULT '', description TEXT NOT NULL DEFAULT '', created TEXT NOT NULL)")
+    cur.execute("CREATE TABLE IF NOT EXISTS push_subscriptions (id INTEGER PRIMARY KEY AUTOINCREMENT, customer_id TEXT UNIQUE, subscription_json TEXT)")
+    cur.execute("CREATE TABLE IF NOT EXISTS aktsii (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL, price TEXT NOT NULL DEFAULT '', description TEXT, image_url TEXT, created TEXT NOT NULL)")
+    cur.execute("PRAGMA table_info(aktsii)")
+    a_cols = [r[1] for r in cur.fetchall()]
+    if "price" not in a_cols:
+        cur.execute("ALTER TABLE aktsii ADD COLUMN price TEXT NOT NULL DEFAULT ''")
 
-    if not col_exists("aktsii", "price"):
-        cur.execute(f"ALTER TABLE aktsii ADD COLUMN price TEXT {'NOT NULL DEFAULT \'\'' if not DATABASE_URL else ''}")
-
-    cur.execute(f"CREATE TABLE IF NOT EXISTS customers (id {id_type}, full_name TEXT NOT NULL, customer_id TEXT UNIQUE NOT NULL, created TEXT NOT NULL)")
+    cur.execute("CREATE TABLE IF NOT EXISTS customers (id INTEGER PRIMARY KEY AUTOINCREMENT, full_name TEXT NOT NULL, customer_id TEXT UNIQUE NOT NULL, created TEXT NOT NULL)")
 
     # Ҷадвали махсус барои нигоҳдории доимии даромад (History)
     cur.execute(
-        f"""
+        """
         CREATE TABLE IF NOT EXISTS revenue_history (
-            id {id_type},
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
             amount REAL NOT NULL,
             day TEXT NOT NULL,
             customer_id TEXT DEFAULT ''
         )
         """
     )
-    if not col_exists("revenue_history", "customer_id"):
+    cur.execute("PRAGMA table_info(revenue_history)")
+    rev_cols = [r[1] for r in cur.fetchall()]
+    if "customer_id" not in rev_cols:
         cur.execute("ALTER TABLE revenue_history ADD COLUMN customer_id TEXT DEFAULT ''")
 
     # Ҷадвали таърихи пурраи заказҳо (Архив)
     cur.execute(
-        f"""
+        """
         CREATE TABLE IF NOT EXISTS full_order_history (
-            id {id_type},
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
             customer TEXT NOT NULL,
             customer_id TEXT NOT NULL,
             food TEXT NOT NULL,
@@ -163,27 +127,45 @@ def init_db() -> None:
     )
 
     # 2. Баъд сутунҳоро тафтиш ва илова мекунем
-    fields = [
-        ("customer_id", "TEXT NOT NULL DEFAULT ''"), ("qabyl", "INTEGER NOT NULL DEFAULT 0"),
-        ("omoda", "INTEGER NOT NULL DEFAULT 0"), ("phone", "TEXT NOT NULL DEFAULT ''"),
-        ("delivery_type", "TEXT NOT NULL DEFAULT ''"), ("dostavka", "INTEGER NOT NULL DEFAULT 0"),
-        ("out_of_stock", "INTEGER NOT NULL DEFAULT 0"), ("delivery_latitude", "TEXT DEFAULT ''"),
-        ("delivery_longitude", "TEXT DEFAULT ''"), ("delivery_address", "TEXT DEFAULT ''"),
-        ("tip", "TEXT NOT NULL DEFAULT ''"), ("refund", "REAL DEFAULT 0"),
-        ("estimated_time", "INTEGER DEFAULT 0"), ("payment_method", "TEXT DEFAULT 'online'")
-    ]
-    for col, defn in fields:
-        if not col_exists("orders", col):
-            cur.execute(f"ALTER TABLE orders ADD COLUMN {col} {defn}")
+    cur.execute("PRAGMA table_info(orders)")
+    cols = [r[1] for r in cur.fetchall()]
+    if "customer_id" not in cols: cur.execute("ALTER TABLE orders ADD COLUMN customer_id TEXT NOT NULL DEFAULT ''")
+    if "qabyl" not in cols: cur.execute("ALTER TABLE orders ADD COLUMN qabyl INTEGER NOT NULL DEFAULT 0")
+    if "omoda" not in cols: cur.execute("ALTER TABLE orders ADD COLUMN omoda INTEGER NOT NULL DEFAULT 0")
+    if "phone" not in cols:
+        cur.execute("ALTER TABLE orders ADD COLUMN phone TEXT NOT NULL DEFAULT ''")
+    if "delivery_type" not in cols:
+        cur.execute("ALTER TABLE orders ADD COLUMN delivery_type TEXT NOT NULL DEFAULT ''")
+    if "dostavka" not in cols:
+        cur.execute("ALTER TABLE orders ADD COLUMN dostavka INTEGER NOT NULL DEFAULT 0")
+    if "out_of_stock" not in cols: cur.execute("ALTER TABLE orders ADD COLUMN out_of_stock INTEGER NOT NULL DEFAULT 0")
+    if "delivery_latitude" not in cols: cur.execute("ALTER TABLE orders ADD COLUMN delivery_latitude TEXT DEFAULT ''")
+    if "delivery_longitude" not in cols: cur.execute("ALTER TABLE orders ADD COLUMN delivery_longitude TEXT DEFAULT ''")
+    if "delivery_address" not in cols: cur.execute("ALTER TABLE orders ADD COLUMN delivery_address TEXT DEFAULT ''")
+    if "tip" not in cols: cur.execute("ALTER TABLE orders ADD COLUMN tip TEXT NOT NULL DEFAULT ''")
+    if "refund" not in cols: cur.execute("ALTER TABLE orders ADD COLUMN refund REAL DEFAULT 0")
+    if "estimated_time" not in cols: cur.execute("ALTER TABLE orders ADD COLUMN estimated_time INTEGER DEFAULT 0")
+    if "payment_method" not in cols:
+        cur.execute("ALTER TABLE orders ADD COLUMN payment_method TEXT DEFAULT 'online'")
 
     # Ҷадвал барои танзимоти динамикӣ
     cur.execute("CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)")
 
-    if not col_exists("foods", "description"): cur.execute("ALTER TABLE foods ADD COLUMN description TEXT NOT NULL DEFAULT ''")
-    if not col_exists("foods", "subcategory"): cur.execute("ALTER TABLE foods ADD COLUMN subcategory TEXT NOT NULL DEFAULT ''")
-    if not col_exists("reviews", "image_url"): cur.execute("ALTER TABLE reviews ADD COLUMN image_url TEXT")
-    if not col_exists("full_order_history", "tip"): cur.execute("ALTER TABLE full_order_history ADD COLUMN tip TEXT NOT NULL DEFAULT ''")
-    if not col_exists("full_order_history", "payment_method"): cur.execute("ALTER TABLE full_order_history ADD COLUMN payment_method TEXT DEFAULT 'online'")
+    cur.execute("PRAGMA table_info(foods)")
+    f_cols = [r[1] for r in cur.fetchall()]
+    if "description" not in f_cols: cur.execute("ALTER TABLE foods ADD COLUMN description TEXT NOT NULL DEFAULT ''")
+    if "subcategory" not in f_cols:
+        cur.execute("ALTER TABLE foods ADD COLUMN subcategory TEXT NOT NULL DEFAULT ''")
+    
+    cur.execute("PRAGMA table_info(reviews)")
+    r_cols = [r[1] for r in cur.fetchall()]
+    if "image_url" not in r_cols: cur.execute("ALTER TABLE reviews ADD COLUMN image_url TEXT")
+
+    cur.execute("PRAGMA table_info(full_order_history)")
+    foh_cols = [r[1] for r in cur.fetchall()]
+    if "tip" not in foh_cols: cur.execute("ALTER TABLE full_order_history ADD COLUMN tip TEXT NOT NULL DEFAULT ''")
+    if "payment_method" not in foh_cols:
+        cur.execute("ALTER TABLE full_order_history ADD COLUMN payment_method TEXT DEFAULT 'online'")
 
     # 3. Илова кардани додаҳои намунавӣ (Sync with bilol.py)
     sample_foods = [
@@ -361,14 +343,14 @@ def init_db() -> None:
             # Агар дарозии элемент 6 бошад, пас индекси 4 subcategory аст
             sub = f[4] if len(f) == 6 else ""
             created = f[-1]
-
-            upsert_sql = f"INSERT INTO foods (name, price, category, subcategory, image_url, created) VALUES ({qm()},{qm()},{qm()},{qm()},{qm()},{qm()}) ON CONFLICT (name) DO NOTHING" if DATABASE_URL else \
-                         f"INSERT OR IGNORE INTO foods (name, price, category, subcategory, image_url, created) VALUES (?, ?, ?, ?, ?, ?)"
             
-            cur.execute(upsert_sql, (name, price, cat, sub, img, created))
+            cur.execute("""
+                INSERT OR IGNORE INTO foods (name, price, category, subcategory, image_url, created)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, (name, price, cat, sub, img, created))
 
     # Тоза кардани расмҳои гумшуда барои пешгирӣ аз хатогии 404
-    cur.execute(f"UPDATE foods SET image_url = '' WHERE image_url IN ('d9.png', 'd10.png', 'd11.png')")
+    cur.execute("UPDATE foods SET image_url = '' WHERE image_url IN ('d9.png', 'd10.png', 'd11.png')")
 
     conn.commit()
     conn.close()
@@ -2770,8 +2752,10 @@ HTML_TEMPLATE = r"""
         }
 
         function urlBase64ToUint8Array(base64String) {
-            const padding = '='.repeat((4 - base64String.length % 4) % 4);
-            const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+            // Тоза кардани фосилаҳои иловагӣ аз аввал ва охири сатр
+            const cleanedBase64String = base64String.trim();
+            const padding = '='.repeat((4 - cleanedBase64String.length % 4) % 4);
+            const base64 = (cleanedBase64String + padding).replace(/-/g, '+').replace(/_/g, '/');
             const rawData = window.atob(base64);
             const outputArray = new Uint8Array(rawData.length);
             for (let i = 0; i < rawData.length; ++i) {
@@ -3305,13 +3289,30 @@ HTML_TEMPLATE = r"""
         let notificationsHistory = JSON.parse(localStorage.getItem("tfc_notifications_history") || "[]");
         let unreadNotifCount = parseInt(localStorage.getItem("tfc_unread_notif_count") || "0");
 
-        // Автоматикӣ тоза кардани хабарҳои аз 12 соат кӯҳна
-        const twelveHours = 12 * 60 * 60 * 1000;
-        const now = Date.now();
-        notificationsHistory = notificationsHistory.filter(n => !n.timestamp || (now - n.timestamp) < twelveHours);
-        localStorage.setItem("tfc_notifications_history", JSON.stringify(notificationsHistory));
-        unreadNotifCount = notificationsHistory.filter(n => n.isNew).length;
-        localStorage.setItem("tfc_unread_notif_count", unreadNotifCount);
+        function cleanupOldNotifications() {
+            const twelveHours = 12 * 60 * 60 * 1000;
+            const now = Date.now();
+            let history = JSON.parse(localStorage.getItem("tfc_notifications_history") || "[]");
+            const initialLength = history.length;
+
+            // Танҳо хабарҳоеро нигоҳ медорем, ки аз 12 соат кӯҳна нестанд
+            history = history.filter(n => n.timestamp && (now - n.timestamp) < twelveHours);
+
+            if (history.length !== initialLength) {
+                notificationsHistory = history;
+                localStorage.setItem("tfc_notifications_history", JSON.stringify(history));
+                unreadNotifCount = history.filter(n => n.isNew).length;
+                localStorage.setItem("tfc_unread_notif_count", unreadNotifCount);
+                updateNotifBadge();
+                if (document.getElementById('notifications-section').style.display === 'block') {
+                    renderNotificationsList();
+                }
+            }
+        }
+
+        // Санҷиши аввалия ва баъдан ҳар 5 дақиқа барои тозакунии автоматӣ
+        cleanupOldNotifications();
+        setInterval(cleanupOldNotifications, 5 * 60 * 1000);
 
         function updateNotifBadge() {
             const badge = document.getElementById('notif-count');
@@ -3493,19 +3494,9 @@ HTML_TEMPLATE = r"""
         let latestCustomerStatus = localStorage.getItem("tfc_last_notified_status") || "";
         let liveStatusTimeout = null; // Тағйироти нав: барои нигоҳ доштани ID-и setTimeout
         
-        // Helper to parse price string to float (JavaScript)
-        function parsePriceToFloat(priceStr) {
-            if (!priceStr) return 0.0;
-            const cleanedPrice = String(priceStr).replace(/[^0-9.,]/g, '').replace(',', '.');
-            const match = cleanedPrice.match(/(\d+(\.\d+)?)/);
-            if (match) {
-                return parseFloat(match[1]);
-            }
-            return 0.0;
-        }
-
         // Овози хабарнома аз папкаи static
         const notificationSound = new Audio("/static/music.mp3");
+
         function parsePriceOptions(rawPrice) {
             const clean = String(rawPrice || "").replace(/\\s+/g, "").replace(/[сc]$/, "");
             if (!clean.includes("/")) {
@@ -3634,7 +3625,7 @@ HTML_TEMPLATE = r"""
                 .then(function (data) {
                     if (data && data.ok) {
                         const msg = "Ваш заказ <b>отправлен</b>! ✅";
-                        latestCustomerStatus = data.order_id + "_pending";
+                        latestCustomerStatus = String(data.order_id) + "_pending";
                         localStorage.setItem("tfc_last_notified_status", latestCustomerStatus);
                         showLiveStatus(msg, false);
 
@@ -3843,7 +3834,8 @@ HTML_TEMPLATE = r"""
                 phoneNode.focus();
                 return;
             } else { phoneError.classList.add("hidden"); }
-            showWarningBeforeSubmit(() => {
+            // Иловаи таъхири кӯтоҳ барои дуруст кор кардани клик дар мобил
+            setTimeout(() => { showWarningBeforeSubmit(() => {
                 showDeliverySelection(async (type, payPhone) => {
                     const total = cart.reduce((sum, item) => sum + (item.selectedPrice * item.qty), 0);
                     const foodList = cart.map((item, idx) => `${idx + 1}. ${item.food} [${item.selectedLabel}] x${item.qty}`).join(', ');
@@ -3855,7 +3847,7 @@ HTML_TEMPLATE = r"""
                         submitOrderFromCard({ food: foodList, price: String(total), phone: phone, delivery_type: type, payment_method: paymentMethod, payment_phone: payPhone });
                     }, payPhone);
                 });
-            });
+            }); }, 150);
         }
 
         function updateCartBadge() {
@@ -3994,6 +3986,9 @@ HTML_TEMPLATE = r"""
 
             // Тугма вақте фаъол мешавад, ки муштарӣ аз дигар барнома ба браузер бармегардад
             window.addEventListener('focus', unlockButton);
+            
+            // Автоматӣ фаъол кардани тугма пас аз 5 сония, агар корбар барномаро иваз накунад
+            setTimeout(unlockButton, 5000);
 
             window.copyAdminNumber = (text, btn) => {
                 navigator.clipboard.writeText(text).then(() => {
@@ -4058,8 +4053,11 @@ HTML_TEMPLATE = r"""
                     overlay.classList.add('pt-10');
                 };
                 addressInput.onblur = () => {
-                    overlay.classList.replace('items-start', 'items-center');
-                    overlay.classList.remove('pt-10');
+                    // Илова кардани таъхири хурд, то ки клик ба тугма расад пеш аз он ки UI ҳаракат кунад
+                    setTimeout(() => {
+                        overlay.classList.replace('items-start', 'items-center');
+                        if (overlay.classList.contains('pt-10')) overlay.classList.remove('pt-10');
+                    }, 150);
                 };
                 addressInput.focus();
             };
@@ -4090,6 +4088,12 @@ HTML_TEMPLATE = r"""
 
         function showLiveStatus(message, isOk) {
             // Илова ба таърихи хабарҳо
+            const lastEntry = notificationsHistory[notificationsHistory.length - 1];
+            if (lastEntry && lastEntry.message === message && (Date.now() - (lastEntry.timestamp || 0)) < 5000) {
+                // Агар хабар якхела бошад ва дар 5 сонияи охир омада бошад, онро такрор намекунем
+                return;
+            }
+
             notificationsHistory.push({ 
                 message, 
                 isOk, 
@@ -4164,10 +4168,8 @@ HTML_TEMPLATE = r"""
 
                 let oosPart = "";
                 // Тафтиш: Оё ҳамаи хӯрокҳо хат зада шудаанд?
-                const cleanPrice = parseFloat(String(last.price || 0).replace(',', '.').match(/[0-9.]+/)[0]);
-                const cleanRefund = parsePriceToFloat(last.refund);
-                const cleanPrice = parsePriceToFloat(last.price);
-                if (last.out_of_stock && cleanRefund >= cleanPrice && cleanPrice > 0) {
+                const cleanPrice = parseFloat(String(last.price || 0).replace(',', '.').replace(/[^0-9.]/g, ''));
+                if (last.out_of_stock && parseFloat(last.refund) >= cleanPrice && cleanPrice > 0) {
                     statusType = "cancelled_oos";
                     statusText = `К сожалению, нет никаких блюд и мы вернем ваши деньги: ${last.refund} смн. ❌`;
                 } else if (last.out_of_stock) {
@@ -4192,7 +4194,7 @@ HTML_TEMPLATE = r"""
                     statusText = "Ваш заказ доставлен! Приятного аппетита! 🏠✅";
                     statusType = "ready"; ok = true;
                 } else if (last.omoda) {
-                    statusText = last.delivery_type === 'pickup' ? "Ваш заказ готов! Пожалуйста, заберите свои блюда." : "Ваш заказ готов! Через несколько минут мы его доставим. 🚀";
+                    statusText = last.delivery_type === 'pickup' ? "Ваш заказ готов! Пожалуйста, заберите свое блюдо." : "Ваш заказ готов! Через несколько минут мы его доставим. 🚀";
                     statusType = "ready"; ok = true;
                 } else if (last.qabyl) {
                     let timeMsg = "";
@@ -4210,7 +4212,7 @@ HTML_TEMPLATE = r"""
                 }
 
                 // Сохтани калиди беназир: ID-и заказ + статус
-                const statusKey = last.id + "_" + statusType;
+                const statusKey = String(last.id) + "_" + statusType;
 
                 if (statusKey !== latestCustomerStatus) {
                     latestCustomerStatus = statusKey;
@@ -4354,15 +4356,15 @@ def api_reviews_add():
             image_url = filename
 
     created = datetime.now().strftime("%d.%m.%Y %H:%M")
-    conn = get_db_connection(); cur = conn.cursor()
-    cur.execute(f"INSERT INTO reviews (name, text, stars, image_url, created) VALUES ({qm()}, {qm()}, {qm()}, {qm()}, {qm()})", (name, text, stars, image_url, created))
+    conn = sqlite3.connect(DB_PATH); cur = conn.cursor()
+    cur.execute("INSERT INTO reviews (name, text, stars, image_url, created) VALUES (?, ?, ?, ?, ?)", (name, text, stars, image_url, created))
     conn.commit(); conn.close()
     return jsonify({"ok": True})
 
 @app.route("/api/reviews/delete/<int:review_id>", methods=["POST"])
 def api_reviews_delete(review_id):
-    conn = get_db_connection(); cur = conn.cursor()
-    cur.execute(f"DELETE FROM reviews WHERE id = {qm()}", (review_id,))
+    conn = sqlite3.connect(DB_PATH); cur = conn.cursor()
+    cur.execute("DELETE FROM reviews WHERE id = ?", (review_id,))
     conn.commit(); conn.close()
     return jsonify({"ok": True})
 
@@ -4371,11 +4373,8 @@ def api_push_subscribe():
     data = request.get_json()
     customer_id = data.get("customer_id")
     sub_json = json.dumps(data.get("subscription"))
-    conn = get_db_connection(); cur = conn.cursor()
-    if DATABASE_URL:
-        cur.execute("INSERT INTO push_subscriptions (customer_id, subscription_json) VALUES (%s, %s) ON CONFLICT (customer_id) DO UPDATE SET subscription_json = EXCLUDED.subscription_json", (customer_id, sub_json))
-    else:
-        cur.execute("INSERT OR REPLACE INTO push_subscriptions (customer_id, subscription_json) VALUES (?, ?)", (customer_id, sub_json))
+    conn = sqlite3.connect(DB_PATH); cur = conn.cursor()
+    cur.execute("INSERT OR REPLACE INTO push_subscriptions (customer_id, subscription_json) VALUES (?, ?)", (customer_id, sub_json))
     conn.commit(); conn.close()
     return jsonify({"ok": True})
 
@@ -4387,20 +4386,22 @@ def api_customers_register():
     if not full_name or not customer_id:
         return jsonify({"ok": False, "error": "missing_data"}), 400
     
-    created = datetime.now().strftime("%d.%m.%Y %H:%M")
     try:
-        conn = get_db_connection()
-        cur = conn.cursor()
-        if DATABASE_URL:
-            cur.execute("INSERT INTO customers (full_name, customer_id, created) VALUES (%s, %s, %s) ON CONFLICT (customer_id) DO NOTHING", (full_name, customer_id, created))
-        else:
-            cur.execute("INSERT OR IGNORE INTO customers (full_name, customer_id, created) VALUES (?, ?, ?)", 
-                    (full_name, customer_id, created))
-        conn.commit()
-        conn.close()
-        return jsonify({"ok": True})
+        # Фиристодан ба сервери Admin тавассути API
+        resp = requests.post(
+            f"{ADMIN_URL}/api/external/sync",
+            headers={"X-API-KEY": API_KEY},
+            json={
+                "sync_type": "customer",
+                "full_name": full_name,
+                "customer_id": customer_id
+            },
+            timeout=10
+        )
+        return jsonify(resp.json())
     except Exception as e:
-        return jsonify({"ok": False, "error": str(e)}), 500
+        print(f"Sync Error: {e}")
+        return jsonify({"ok": False, "error": "Admin server unreachable"}), 503
 
 @app.route("/api/auth/send-code", methods=["POST"])
 def api_send_code():
@@ -4466,20 +4467,29 @@ def api_orders_new():
     if not tip:
         tip = "Наличными 💵" if payment_method == "cash" else f"Картой 💳 ({payment_phone})"
     
-    data['tip'] = tip # Иловаи tip ба маълумот барои Admin
-
-    # Фиристодани фармоиш ба Admin Panel тавассути API
     try:
+        # Фиристодани заказ ба сервери Admin
         resp = requests.post(
-            f"{ADMIN_URL}/api/orders/new",
-            json=data,
-            headers={"Authorization": f"Bearer {API_TOKEN}"},
-            timeout=10
+            f"{ADMIN_URL}/api/external/sync",
+            headers={"X-API-KEY": API_KEY},
+            json={
+                "sync_type": "order",
+                "customer": customer,
+                "customer_id": customer_id,
+                "food": food,
+                "price": price,
+                "phone": phone,
+                "delivery_type": delivery_type,
+                "delivery_address": delivery_address,
+                "payment_method": payment_method,
+                "tip": tip
+            },
+            timeout=15
         )
         return jsonify(resp.json())
     except Exception as e:
-        print(f"Connection error to Admin: {e}")
-        return jsonify({"ok": False, "error": "admin_not_reachable"}), 500
+        print(f"Order Sync Error: {e}")
+        return jsonify({"ok": False, "error": "Admin server unreachable"}), 503
 
 @app.route("/api/get-next-payment-phone")
 def api_get_next_phone():
@@ -4490,8 +4500,8 @@ def api_get_next_phone():
 def api_orders_since():
     try:
         last_id = int(request.args.get("last_id", 0))
-        conn = get_db_connection(); cur = conn.cursor()
-        cur.execute(f"SELECT id, customer, customer_id, food, price, qabyl, omoda, created, phone, delivery_type, delivery_latitude, delivery_longitude, delivery_address, estimated_time, tip FROM orders WHERE id > {qm()}", (last_id,))
+        conn = sqlite3.connect(DB_PATH, timeout=20); cur = conn.cursor()
+        cur.execute("SELECT id, customer, customer_id, food, price, qabyl, omoda, created, phone, delivery_type, delivery_latitude, delivery_longitude, delivery_address, estimated_time, tip FROM orders WHERE id > ?", (last_id,))
         rows = cur.fetchall(); conn.close()
         return jsonify({"ok": True, "orders": [{"id": r[0], "customer": r[1], "customer_id": r[2], "food": r[3], "price": r[4], "qabyl": bool(r[5]), "omoda": bool(r[6]), "created": r[7], "phone": r[8], "delivery_type": r[9], "delivery_latitude": r[10] if len(r) > 10 else "", "delivery_longitude": r[11] if len(r) > 11 else "", "delivery_address": r[12] if len(r) > 12 else "", "estimated_time": r[13], "tip": r[14] if len(r) > 14 else ""} for r in rows]})
     except ValueError:
@@ -4506,11 +4516,11 @@ def api_orders_update_status():
     order_id, field = data.get("id"), data.get("field")
     db_value = int(data.get("value", 0))
     estimated_time = data.get("estimated_time")
-    conn = get_db_connection(); cur = conn.cursor()
+    conn = sqlite3.connect(DB_PATH, timeout=20); cur = conn.cursor()
     if field == 'qabyl' and estimated_time is not None:
-        cur.execute(f"UPDATE orders SET {field} = {qm()}, estimated_time = {qm()} WHERE id = {qm()}", (db_value, estimated_time, order_id))
+        cur.execute(f"UPDATE orders SET {field} = ?, estimated_time = ? WHERE id = ?", (db_value, estimated_time, order_id))
     else:
-        cur.execute(f"UPDATE orders SET {field} = {qm()} WHERE id = {qm()}", (db_value, order_id))
+        cur.execute(f"UPDATE orders SET {field} = ? WHERE id = ?", (db_value, order_id))
     conn.commit(); conn.close()
 
     # Push Notification Logic
@@ -4522,29 +4532,29 @@ def api_orders_update_status():
 @app.route("/api/orders/customer-status", methods=["GET"])
 def api_orders_customer_status():
     customer_id = request.args.get("customer_id", "")
-    # Гирифтани статус аз Admin Panel
     try:
-        resp = requests.get(
-            f"{ADMIN_URL}/api/orders/customer-status?customer_id={customer_id}",
-            headers={"Authorization": f"Bearer {API_TOKEN}"},
-            timeout=5
-        )
-        return jsonify(resp.json())
+        conn = sqlite3.connect(DB_PATH, timeout=20); cur = conn.cursor()
+        cur.execute("SELECT id, food, qabyl, omoda, phone, delivery_type, dostavka, out_of_stock, refund, estimated_time, price FROM orders WHERE customer_id = ? ORDER BY id DESC LIMIT 1", (customer_id,))
+        r = cur.fetchone(); conn.close()
+        orders = [{"id": r[0], "food": r[1], "qabyl": bool(r[2]), "omoda": bool(r[3]), "phone": r[4], "delivery_type": r[5], "dostavka": int(r[6]), "out_of_stock": bool(r[7]), "refund": r[8] if r[8] is not None else 0, "estimated_time": r[9] if len(r) > 9 else 0, "price": r[10] if len(r) > 10 else "0"}] if r else []
+        return jsonify({"ok": True, "orders": orders})
     except Exception as e:
-        return jsonify({"ok": False, "error": "status_api_failed"})
+        print(f"Status Error: {e}")
+        return jsonify({"ok": False, "error": str(e)})
 
 @app.route("/api/foods/list", methods=["GET"])
 def api_foods_list():
-    conn = get_db_connection(); cur = conn.cursor()
+    conn = sqlite3.connect(DB_PATH, timeout=20); cur = conn.cursor()
     cur.execute("SELECT id, name, price, category, image_url, description FROM foods"); rows = cur.fetchall(); conn.close()
     return jsonify({"ok": True, "foods": [{"id": r[0], "name": r[1], "price": r[2], "category": r[3], "image_url": r[4], "description": r[5]} for r in rows]})
 
 def get_orders():
     try:
-        with get_db_connection() as conn:
-            cur = get_cursor(conn)
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.row_factory = sqlite3.Row
+            cur = conn.cursor()
             cur.execute("SELECT food, price, qabyl, omoda FROM orders ORDER BY id DESC LIMIT 10")
-            orders = [to_dict(row, cur) for row in cur.fetchall()]
+            orders = [dict(row) for row in cur.fetchall()]
         return orders
     except Exception as e:
         print(f"Database error: {e}")
@@ -4552,12 +4562,11 @@ def get_orders():
 
 def get_all_foods():
     try:
-        # Гирифтани меню аз Admin тавассути API
-        resp = requests.get(f"{ADMIN_URL}/api/foods/list", timeout=5)
-        data = resp.json()
-        if not data.get("ok"):
-            return {}
-        foods = data.get("foods", [])
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.row_factory = sqlite3.Row
+            cur = conn.cursor()
+            cur.execute("SELECT id, name, price, category, subcategory, image_url, description FROM foods")
+            foods = [dict(row) for row in cur.fetchall()]
         
         # Group by category and detect media type
         cat_map = {}
@@ -4571,23 +4580,23 @@ def get_all_foods():
 
 def get_all_reviews():
     try:
-        with get_db_connection() as conn:
-            cur = get_cursor(conn)
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.row_factory = sqlite3.Row
+            cur = conn.cursor()
             cur.execute("SELECT id, name, text, stars, image_url, created FROM reviews ORDER BY id DESC")
-            return [to_dict(row, cur) for row in cur.fetchall()]
+            return [dict(row) for row in cur.fetchall()]
     except: return []
 
 def get_all_aktsii():
     try:
-        # Гирифтани аксияҳо аз Admin тавассути API
-        resp = requests.get(f"{ADMIN_URL}/api/aktsii/list", timeout=5)
-        data = resp.json()
-        if not data.get("ok"):
-            return []
-        results = data.get("aktsii", [])
-        for r in results:
-            r['is_video'] = bool(r.get('image_url') and r['image_url'].lower().endswith(('.mp4', '.webm', '.mov', '.ogg')))
-        return results
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.row_factory = sqlite3.Row
+            cur = conn.cursor()
+            cur.execute("SELECT title, price, description, image_url, created FROM aktsii ORDER BY id DESC")
+            results = [dict(row) for row in cur.fetchall()]
+            for r in results:
+                r['is_video'] = bool(r.get('image_url') and r['image_url'].lower().endswith(('.mp4', '.webm', '.mov', '.ogg')))
+            return results
     except: return []
 
 @app.route('/')
@@ -4598,12 +4607,10 @@ def home():
 def food_detail(food_id):
     """Display detailed information for a single food item"""
     try:
-        conn = get_db_connection()
-        cur = get_cursor(conn)
+        conn = sqlite3.connect(DB_PATH, timeout=20)
+        conn.row_factory = sqlite3.Row
+        cur = conn.cursor()
         cur.execute("""
-            SELECT id, name, price, category, description, image_url, created
-            FROM foods WHERE id = %s
-        """ if DATABASE_URL else """
             SELECT id, name, price, category, description, image_url, created
             FROM foods WHERE id = ?
         """, (food_id,))
@@ -4613,7 +4620,7 @@ def food_detail(food_id):
         if not food:
             return redirect('/')
         
-        food = to_dict(food, cur)
+        food = dict(food)
         food['image_path'] = f"/static/images/{food['image_url']}" if food['image_url'] else ""
         
         # Check if image is a video

@@ -1,6 +1,5 @@
 from flask import Flask, render_template_string, request, jsonify, send_from_directory
 import sqlite3
-import psycopg2
 import json
 import os
 import socket
@@ -17,56 +16,18 @@ VAPID_PUBLIC_KEY = "BCX7B8_p9v7Z-S-l1M0W4Y1Z2X3C4V5B6N7M8L9K0J1I2H3G4F5E6D7C8B9A
 VAPID_PRIVATE_KEY = "m1N2B3V4C5X6Z7A8S9D0F1G2H3J4K5L6m1N2B3V4C5X"
 VAPID_CLAIMS = {"sub": "mailto:admin@tfc-kulob.tj"}
 
-API_TOKEN = os.environ.get("API_TOKEN", "TFC_SECRET_KEY_2024")
+API_KEY = "TFC_SECRET_SECURE_KEY_2026"
 
 DB_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "tfc_admin.db"))
-DATABASE_URL = os.environ.get("DATABASE_URL")
-if DATABASE_URL and DATABASE_URL.startswith("postgres://"):
-    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
-
-# Helper to parse price string to float
-def parse_price_to_float(price_str):
-    if not price_str:
-        return 0.0
-    # Remove all non-digit/dot/comma characters, then replace comma with dot
-    cleaned_price = re.sub(r'[^\d.,]', '', str(price_str)).replace(',', '.')
-    # Find the first sequence of digits and an optional dot
-    match = re.search(r'(\d+(\.\d+)?)', cleaned_price)
-    if match:
-        try:
-            return float(match.group(1))
-        except ValueError:
-            return 0.0
-    return 0.0
-def get_db_connection():
-    if DATABASE_URL:
-        # Пайвастшавӣ ба PostgreSQL (барои Render)
-        return psycopg2.connect(DATABASE_URL, sslmode='require')
-    # Пайвастшавӣ ба SQLite (локалӣ)
-    return sqlite3.connect(DB_PATH, timeout=20)
-
-def qm():
-    # Postgres %s-ро истифода мебарад, SQLite ?-ро
-    return "%s" if DATABASE_URL else "?"
 
 
 def init_db() -> None:
-    conn = get_db_connection()
+    conn = sqlite3.connect(DB_PATH, timeout=20)
     cur = conn.cursor()
-
-    id_type = "SERIAL PRIMARY KEY" if DATABASE_URL else "INTEGER PRIMARY KEY AUTOINCREMENT"
-
-    def col_exists(table, col):
-        if DATABASE_URL:
-            cur.execute("SELECT column_name FROM information_schema.columns WHERE table_name=%s AND column_name=%s", (table, col))
-            return cur.fetchone() is not None
-        cur.execute(f"PRAGMA table_info({table})")
-        return any(r[1] == col for r in cur.fetchall())
-
     cur.execute(
-        f"""
+        """
         CREATE TABLE IF NOT EXISTS orders (
-            id {id_type},
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
             customer TEXT NOT NULL,
             customer_id TEXT NOT NULL DEFAULT '',
             food TEXT NOT NULL,
@@ -83,44 +44,60 @@ def init_db() -> None:
         )
         """
     )
+    cur.execute("PRAGMA table_info(orders)")
+    cols = [r[1] for r in cur.fetchall()]
+    if "customer_id" not in cols:
+        cur.execute("ALTER TABLE orders ADD COLUMN customer_id TEXT NOT NULL DEFAULT ''")
+    if "qabyl" not in cols:
+        cur.execute("ALTER TABLE orders ADD COLUMN qabyl INTEGER NOT NULL DEFAULT 0")
+    if "omoda" not in cols:
+        cur.execute("ALTER TABLE orders ADD COLUMN omoda INTEGER NOT NULL DEFAULT 0")
+    if "phone" not in cols:
+        cur.execute("ALTER TABLE orders ADD COLUMN phone TEXT NOT NULL DEFAULT ''")
+    if "delivery_type" not in cols:
+        cur.execute("ALTER TABLE orders ADD COLUMN delivery_type TEXT NOT NULL DEFAULT ''")
+    if "dostavka" not in cols:
+        cur.execute("ALTER TABLE orders ADD COLUMN dostavka INTEGER NOT NULL DEFAULT 0")
+    if "out_of_stock" not in cols:
+        cur.execute("ALTER TABLE orders ADD COLUMN out_of_stock INTEGER NOT NULL DEFAULT 0")
+    if "tip" not in cols: cur.execute("ALTER TABLE orders ADD COLUMN tip TEXT NOT NULL DEFAULT ''")
+    if "refund" not in cols:
+        cur.execute("ALTER TABLE orders ADD COLUMN refund REAL NOT NULL DEFAULT 0")
+    if "delivery_latitude" not in cols:
+        cur.execute("ALTER TABLE orders ADD COLUMN delivery_latitude TEXT DEFAULT ''")
+    if "delivery_longitude" not in cols:
+        cur.execute("ALTER TABLE orders ADD COLUMN delivery_longitude TEXT DEFAULT ''")
+    if "delivery_address" not in cols:
+        cur.execute("ALTER TABLE orders ADD COLUMN delivery_address TEXT DEFAULT ''")
+    if "estimated_time" not in cols:
+        cur.execute("ALTER TABLE orders ADD COLUMN estimated_time INTEGER DEFAULT 0")
+    if "payment_method" not in cols:
+        cur.execute("ALTER TABLE orders ADD COLUMN payment_method TEXT DEFAULT 'online'")
     
-    # Тафтиши сутунҳо бо усули универсалӣ
-    fields = [
-        ("customer_id", "TEXT NOT NULL DEFAULT ''"), ("qabyl", "INTEGER NOT NULL DEFAULT 0"),
-        ("omoda", "INTEGER NOT NULL DEFAULT 0"), ("phone", "TEXT NOT NULL DEFAULT ''"),
-        ("delivery_type", "TEXT NOT NULL DEFAULT ''"), ("dostavka", "INTEGER NOT NULL DEFAULT 0"),
-        ("out_of_stock", "INTEGER NOT NULL DEFAULT 0"), ("tip", "TEXT NOT NULL DEFAULT ''"),
-        ("refund", "REAL NOT NULL DEFAULT 0"), ("delivery_latitude", "TEXT DEFAULT ''"),
-        ("delivery_longitude", "TEXT DEFAULT ''"), ("delivery_address", "TEXT DEFAULT ''"),
-        ("estimated_time", "INTEGER DEFAULT 0"), ("payment_method", "TEXT DEFAULT 'online'")
-    ]
-    for col, defn in fields:
-        if not col_exists("orders", col):
-            cur.execute(f"ALTER TABLE orders ADD COLUMN {col} {defn}")
-
-    cur.execute(f"CREATE TABLE IF NOT EXISTS customers (id {id_type}, full_name TEXT NOT NULL, customer_id TEXT UNIQUE NOT NULL, created TEXT NOT NULL)")
-    cur.execute(f"CREATE TABLE IF NOT EXISTS reviews (id {id_type}, name TEXT NOT NULL, text TEXT NOT NULL, stars INTEGER NOT NULL, image_url TEXT, created TEXT NOT NULL)")
-    cur.execute(f"CREATE TABLE IF NOT EXISTS push_subscriptions (id {id_type}, customer_id TEXT UNIQUE, subscription_json TEXT)")
+    cur.execute("CREATE TABLE IF NOT EXISTS customers (id INTEGER PRIMARY KEY AUTOINCREMENT, full_name TEXT NOT NULL, customer_id TEXT UNIQUE NOT NULL, created TEXT NOT NULL)")
+    cur.execute("CREATE TABLE IF NOT EXISTS reviews (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, text TEXT NOT NULL, stars INTEGER NOT NULL, image_url TEXT, created TEXT NOT NULL)")
 
     # Сохтани ҷадвали revenue_history барои графикҳо
     cur.execute(
-        f"""
+        """
         CREATE TABLE IF NOT EXISTS revenue_history (
-            id {id_type},
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
             amount REAL NOT NULL,
             day TEXT NOT NULL,
             customer_id TEXT DEFAULT ''
         )
         """
     )
-    if not col_exists("revenue_history", "customer_id"):
+    cur.execute("PRAGMA table_info(revenue_history)")
+    rev_cols = [r[1] for r in cur.fetchall()]
+    if "customer_id" not in rev_cols:
         cur.execute("ALTER TABLE revenue_history ADD COLUMN customer_id TEXT DEFAULT ''")
 
     # Сохтани ҷадвали full_order_history барои таърихи пурра
     cur.execute(
-        f"""
+        """
         CREATE TABLE IF NOT EXISTS full_order_history (
-            id {id_type},
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
             customer TEXT NOT NULL,
             customer_id TEXT NOT NULL,
             food TEXT NOT NULL,
@@ -131,8 +108,10 @@ def init_db() -> None:
         )
         """
     )
-    if not col_exists("full_order_history", "tip"): cur.execute("ALTER TABLE full_order_history ADD COLUMN tip TEXT NOT NULL DEFAULT ''")
-    if not col_exists("full_order_history", "payment_method"):
+    cur.execute("PRAGMA table_info(full_order_history)")
+    foh_cols = [r[1] for r in cur.fetchall()]
+    if "tip" not in foh_cols: cur.execute("ALTER TABLE full_order_history ADD COLUMN tip TEXT NOT NULL DEFAULT ''")
+    if "payment_method" not in foh_cols:
         cur.execute("ALTER TABLE full_order_history ADD COLUMN payment_method TEXT DEFAULT 'online'")
 
     # Create settings table
@@ -140,9 +119,9 @@ def init_db() -> None:
 
     # Create foods table
     cur.execute(
-        f"""
+        """
         CREATE TABLE IF NOT EXISTS foods (
-            id {id_type},
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
             name TEXT NOT NULL UNIQUE,
             price TEXT NOT NULL,
             category TEXT NOT NULL,
@@ -152,13 +131,20 @@ def init_db() -> None:
         )
         """
     )
-    if not col_exists("foods", "subcategory"): cur.execute("ALTER TABLE foods ADD COLUMN subcategory TEXT NOT NULL DEFAULT ''")
+    cur.execute("PRAGMA table_info(foods)")
+    cols = [r[1] for r in cur.fetchall()]
+    if "image_url" not in cols:
+        cur.execute("ALTER TABLE foods ADD COLUMN image_url TEXT NOT NULL DEFAULT ''")
+    if "description" not in cols:
+        cur.execute("ALTER TABLE foods ADD COLUMN description TEXT NOT NULL DEFAULT ''")
+    if "subcategory" not in cols:
+        cur.execute("ALTER TABLE foods ADD COLUMN subcategory TEXT NOT NULL DEFAULT ''")
 
     # Create aktsii table and keep price/image/description available
     cur.execute(
-        f"""
+        """
         CREATE TABLE IF NOT EXISTS aktsii (
-            id {id_type},
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
             title TEXT NOT NULL,
             price TEXT NOT NULL DEFAULT '',
             description TEXT NOT NULL DEFAULT '',
@@ -167,6 +153,14 @@ def init_db() -> None:
         )
         """
     )
+    cur.execute("PRAGMA table_info(aktsii)")
+    cols = [r[1] for r in cur.fetchall()]
+    if "price" not in cols:
+        cur.execute("ALTER TABLE aktsii ADD COLUMN price TEXT NOT NULL DEFAULT ''")
+    if "description" not in cols:
+        cur.execute("ALTER TABLE aktsii ADD COLUMN description TEXT NOT NULL DEFAULT ''")
+    if "image_url" not in cols:
+        cur.execute("ALTER TABLE aktsii ADD COLUMN image_url TEXT NOT NULL DEFAULT ''")
 
     # Sync foods list (Force Update)
     foods_data = [
@@ -324,11 +318,11 @@ def init_db() -> None:
     ]
 
     # Ин қисм маълумоти рӯйхатро ба базаи маълумот менависад
-    # Тағйирот: Истифодаи ON CONFLICT барои PostgreSQL
-    upsert_sql = f"INSERT INTO foods (name, price, category, subcategory, image_url, description, created) VALUES ({qm()},{qm()},{qm()},{qm()},{qm()},{qm()},{qm()}) ON CONFLICT (name) DO NOTHING" if DATABASE_URL else \
-                 f"INSERT OR IGNORE INTO foods (name, price, category, subcategory, image_url, description, created) VALUES (?, ?, ?, ?, ?, ?, ?)"
     for f in foods_data:
-        cur.execute(upsert_sql, f)
+        cur.execute("""
+            INSERT OR REPLACE INTO foods (name, price, category, subcategory, image_url, description, created)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, f)
 
     conn.commit()
     conn.close()
@@ -2522,19 +2516,71 @@ def add_cors_headers(resp):
     return resp
 
 
+@app.route("/api/external/sync", methods=["POST"])
+def api_external_sync():
+    """Қабули маълумот аз Client (app.py) тавассути API"""
+    if request.headers.get("X-API-KEY") != API_KEY:
+        return jsonify({"ok": False, "error": "Unauthorized"}), 403
+
+    data = request.get_json(silent=True) or {}
+    sync_type = data.get("sync_type") # 'order' ё 'customer'
+
+    conn = sqlite3.connect(DB_PATH, timeout=20)
+    cur = conn.cursor()
+
+    try:
+        if sync_type == "order":
+            customer = data.get("customer", "Неизвестно")
+            customer_id = data.get("customer_id", "")
+            food = data.get("food", "Блюдо")
+            price = data.get("price", "0")
+            phone = data.get("phone", "")
+            delivery_type = data.get("delivery_type", "pickup")
+            delivery_address = data.get("delivery_address", "")
+            payment_method = data.get("payment_method", "online")
+            tip = data.get("tip", "")
+            created = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+            cur.execute(
+                "INSERT INTO orders (customer, customer_id, food, price, phone, delivery_type, delivery_address, payment_method, tip, qabyl, omoda, created) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?)",
+                (customer, customer_id, food, price, phone, delivery_type, delivery_address, payment_method, tip, created),
+            )
+            order_id = cur.lastrowid
+
+            cur.execute(
+                "INSERT INTO full_order_history (customer, customer_id, food, price, phone, delivery_type, payment_method, tip, created) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (customer, customer_id, food, price, phone, delivery_type, payment_method, tip, created)
+            )
+
+            p_clean = "".join(c for c in str(price).replace(',', '.') if c.isdigit() or c == '.')
+            amount = float(p_clean) if p_clean else 0.0
+            cur.execute("INSERT INTO revenue_history (amount, day, customer_id) VALUES (?, ?, ?)", (amount, created[:10], customer_id))
+            
+            conn.commit()
+            return jsonify({"ok": True, "order_id": order_id})
+
+        elif sync_type == "customer":
+            full_name = data.get("full_name")
+            cust_id = data.get("customer_id")
+            created = datetime.now().strftime("%d.%m.%Y %H:%M")
+            cur.execute("INSERT OR IGNORE INTO customers (full_name, customer_id, created) VALUES (?, ?, ?)", (full_name, cust_id, created))
+            conn.commit()
+            return jsonify({"ok": True})
+
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+    finally:
+        conn.close()
+
+    return jsonify({"ok": False, "error": "unknown_sync_type"}), 400
+
+
 @app.route("/api/orders/new", methods=["POST", "OPTIONS"])
 def api_orders_new():
     if request.method == "OPTIONS":
         return ("", 204)
 
-    # Тафтиши Токен барои амният
-    if request.headers.get("Authorization") != f"Bearer {API_TOKEN}":
-        print(f"ПРЕДУПРЕЖДЕНИЕ: Попытка доступа с неверным токеном!")
-        return jsonify({"ok": False, "error": "unauthorized"}), 401
-
     data = request.get_json(silent=True) or {}
-    print(f"НОВЫЙ ЗАКАЗ ПОСТУПИЛ: {data.get('customer')} - {data.get('food')}")
-
     customer = (data.get("customer") or "Неизвестно").strip()
     customer_id = str(data.get("customer_id") or "").strip()
     food = (data.get("food") or "Блюдо").strip()
@@ -2545,27 +2591,19 @@ def api_orders_new():
     delivery_longitude = str(data.get("delivery_longitude") or "").strip()
     delivery_address = str(data.get("delivery_address") or "").strip()
     payment_method = str(data.get("payment_method") or "online").strip()
-    tip = str(data.get("tip") or "").strip()
     created = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-    conn = get_db_connection()
+    conn = sqlite3.connect(DB_PATH, timeout=20)
     cur = conn.cursor()
-    
-    # Барои PostgreSQL мо бояд RETURNING id-ро истифода барем
-    query = f"INSERT INTO orders (customer, customer_id, food, price, phone, delivery_type, delivery_latitude, delivery_longitude, delivery_address, payment_method, tip, qabyl, omoda, created) VALUES ({qm()},{qm()},{qm()},{qm()},{qm()},{qm()},{qm()},{qm()},{qm()},{qm()},{qm()}, 0, 0, {qm()})"
-    if DATABASE_URL:
-        query += " RETURNING id"
-    
     cur.execute(
-        query,
-        (customer, customer_id, food, price, phone, delivery_type, delivery_latitude, delivery_longitude, delivery_address, payment_method, tip, created)
+        "INSERT INTO orders (customer, customer_id, food, price, phone, delivery_type, delivery_latitude, delivery_longitude, delivery_address, payment_method, qabyl, omoda, created) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?)",
+        (customer, customer_id, food, price, phone, delivery_type, delivery_latitude, delivery_longitude, delivery_address, payment_method, created),
     )
-    
-    order_id = cur.fetchone()[0] if DATABASE_URL else cur.lastrowid
+    order_id = cur.lastrowid
 
     # Log to full history table
     cur.execute(
-        f"INSERT INTO full_order_history (customer, customer_id, food, price, phone, delivery_type, payment_method, created) VALUES ({qm()},{qm()},{qm()},{qm()},{qm()},{qm()},{qm()},{qm()})",
+        "INSERT INTO full_order_history (customer, customer_id, food, price, phone, delivery_type, payment_method, created) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
         (customer, customer_id, food, price, phone, delivery_type, payment_method, created)
     )
 
@@ -2573,7 +2611,7 @@ def api_orders_new():
     try:
         p_clean = "".join(c for c in str(price).replace(',', '.') if c.isdigit() or c == '.')
         amount = float(p_clean) if p_clean else 0.0
-        cur.execute(f"INSERT INTO revenue_history (amount, day, customer_id) VALUES ({qm()}, {qm()}, {qm()})", (amount, datetime.now().strftime("%Y-%m-%d"), customer_id))
+        cur.execute("INSERT INTO revenue_history (amount, day, customer_id) VALUES (?, ?, ?)", (amount, datetime.now().strftime("%Y-%m-%d"), customer_id))
     except: pass
 
     conn.commit()
@@ -2582,7 +2620,6 @@ def api_orders_new():
     return jsonify(
         {
             "ok": True,
-            "order_id": order_id,
             "order": {
                 "id": order_id,
                 "customer": customer,
@@ -2606,10 +2643,10 @@ def api_orders_since():
     except ValueError:
         last_id_int = 0
 
-    conn = get_db_connection()
+    conn = sqlite3.connect(DB_PATH, timeout=20)
     cur = conn.cursor()
     cur.execute(
-        f"SELECT id, customer, customer_id, food, price, qabyl, omoda, created, phone, delivery_type, dostavka, out_of_stock, refund, delivery_latitude, delivery_longitude, delivery_address, estimated_time, payment_method, tip FROM orders WHERE id > {qm()} ORDER BY id ASC",
+        "SELECT id, customer, customer_id, food, price, qabyl, omoda, created, phone, delivery_type, dostavka, out_of_stock, refund, delivery_latitude, delivery_longitude, delivery_address, estimated_time, payment_method, tip FROM orders WHERE id > ? ORDER BY id ASC",
         (last_id_int,),
     )
     rows = cur.fetchall()
@@ -2664,11 +2701,11 @@ def api_orders_update_status():
 
     db_value = str(value) if field == 'food' else (float(value) if field == 'refund' else int(value))
         
-    conn = get_db_connection()
+    conn = sqlite3.connect(DB_PATH, timeout=20)
     cur = conn.cursor()
     
     # Гирифтани маълумоти кунунӣ барои навсозии таърих ва пешгирӣ аз такрор
-    cur.execute(f"SELECT {field if field != 'food' else 'food'}, customer_id, food, delivery_type, created, refund, price, estimated_time FROM orders WHERE id = {qm()}", (order_id,))
+    cur.execute(f"SELECT {field if field != 'food' else 'food'}, customer_id, food, delivery_type, created, refund, price, estimated_time FROM orders WHERE id = ?", (order_id,))
     row = cur.fetchone()
     if not row:
         conn.close()
@@ -2677,79 +2714,72 @@ def api_orders_update_status():
     current_val, customer_id, food_name, del_type, created_at, old_refund, orig_price_str, old_est_time = row
     
     # Агар статус тағйир наёфта бошад (барои майдонҳои техникӣ), Push намефиристем
-    if field not in ('food', 'refund') and str(current_val) == str(db_value):
+    if field not in ('food', 'refund') and int(current_val) == db_value:
         conn.close()
         return jsonify({"ok": True, "note": "no_change"})
     
     if field == 'qabyl' and estimated_time is not None:
-        cur.execute(f"UPDATE orders SET qabyl = {qm()}, estimated_time = {qm()} WHERE id = {qm()}", (db_value, estimated_time, order_id))
+        cur.execute("UPDATE orders SET qabyl = ?, estimated_time = ? WHERE id = ?", (db_value, estimated_time, order_id))
     else:
-        cur.execute(f"UPDATE orders SET {field} = {qm()} WHERE id = {qm()}", (db_value, order_id))
-        if field == 'food': food_name = db_value # Навсозии ном барои Push дар поён
+        cur.execute(f"UPDATE orders SET {field} = ? WHERE id = ?", (db_value, order_id))
 
     # ТАФТИШИ УМУМӢ: Агар заказ пурра хат зада шуда бошад, онро ҳамчун "Иҷрошуда" қайд мекунем
     # Ин тафтиш бояд ҳар вақте ки хӯрок, маблағ ё статус тағйир меёбад, иҷро шавад
     if field in ('food', 'refund', 'out_of_stock'):
-        cur.execute(f"SELECT refund, price, out_of_stock FROM orders WHERE id = {qm()}", (order_id,))
+        cur.execute("SELECT refund, price, out_of_stock FROM orders WHERE id = ?", (order_id,))
         rv, ps, oos = cur.fetchone()
-        pc = parse_price_to_float(ps)
+        try: pc = float("".join(c for c in str(ps).replace(',', '.') if c.isdigit() or c == '.'))
+        except: pc = 0.0
         if oos and pc > 0 and rv >= pc:
-            cur.execute(f"UPDATE orders SET qabyl = 1, omoda = 1 WHERE id = {qm()}", (order_id,))
+            cur.execute("UPDATE orders SET qabyl = 1, omoda = 1 WHERE id = ?", (order_id,))
 
     # НАВСОЗИИ ТАЪРИХИ ДАРОМАД ВА АРХИВ
     if field == 'refund':
         diff = db_value - old_refund
         if diff != 0:
-            order_date = created_at[:10] if created_at else datetime.now().strftime("%Y-%m-%d") # Use the original order date
-            cur.execute(f"INSERT INTO revenue_history (amount, day, customer_id) VALUES ({qm()}, {qm()}, {qm()})", (-diff, order_date, customer_id))
+            # 1. Кам кардани маблағ аз таърихи даромад (График)
+            # Мо маблағи манфиро илова мекунем, то суммаи умумии он рӯз дуруст шавад
+            order_date = created_at[:10] if created_at else datetime.now().strftime("%Y-%m-%d")
+            cur.execute("INSERT INTO revenue_history (amount, day, customer_id) VALUES (?, ?, ?)", (-diff, order_date, customer_id))
             
             # 2. Навсозии сумма дар архиви заказҳо (Full History)
             try:
                 p_clean = "".join(c for c in str(orig_price_str).replace(',', '.') if c.isdigit() or c == '.')
                 orig_p = float(p_clean) if p_clean else 0.0
                 new_display_price = str(round(orig_p - db_value, 2))
-                cur.execute(f"UPDATE full_order_history SET price = {qm()} WHERE customer_id = {qm()} AND created = {qm()}", (new_display_price, customer_id, created_at))
+                cur.execute("UPDATE full_order_history SET price = ? WHERE customer_id = ? AND created = ?", (new_display_price, customer_id, created_at))
             except: pass
 
     if field == 'food':
         # Навсозии рӯйхати хӯрокҳо дар архив, агар ягон чиз хат зада шуда бошад
-        cur.execute(f"UPDATE full_order_history SET food = {qm()} WHERE customer_id = {qm()} AND created = {qm()}", (db_value, customer_id, created_at))
+        cur.execute("UPDATE full_order_history SET food = ? WHERE customer_id = ? AND created = ?", (db_value, customer_id, created_at))
 
     conn.commit()
     updated = cur.rowcount > 0
     conn.close()
 
-    # Фиристодани Push: 
-    # 1. Агар статус 1 шавад 
-    # 2. Ё агар матни хӯрок/рефунд тағйир ёбад (барои хат задан)
-    should_notify = (updated and (
-        (field in ('qabyl', 'omoda', 'dostavka', 'out_of_stock') and db_value == 1) or
-        (field in ('food', 'refund'))
-    ))
-
-    if should_notify:
-        conn = get_db_connection(); cur = conn.cursor()
-        cur.execute(f"SELECT subscription_json FROM push_subscriptions WHERE customer_id = {qm()}", (customer_id,))
+    # Фиристодани Push агар статус "ҳа" (1) шавад
+    if updated and db_value == 1:
+        conn = sqlite3.connect(DB_PATH, timeout=20); cur = conn.cursor()
+        cur.execute("SELECT subscription_json FROM push_subscriptions WHERE customer_id = ?", (customer_id,))
         sub_row = cur.fetchone()
         if sub_row:
             sub_info = json.loads(sub_row[0])
-            
-            cur.execute(f"SELECT refund, price FROM orders WHERE id = {qm()}", (order_id,))
+            # Гирифтани маблағ ва рефунд барои муқоиса
+            cur.execute("SELECT refund, price FROM orders WHERE id = ?", (order_id,))
             ref_val, orig_price_str = cur.fetchone()
             
-            orig_p = parse_price_to_float(orig_price_str)
+            # Тоза кардани нархи аслӣ барои муқоиса
+            try:
+                p_clean = "".join(c for c in str(orig_price_str).replace(',', '.') if c.isdigit() or c == '.')
+                orig_p = float(p_clean) if p_clean else 0.0
+            except: orig_p = 0.0
             
-            # Ёфтани хӯрокҳои хатзада
+            # Находим названия блюд, которые были зачеркнуты (<s>...</s>)
             struck_items = re.findall(r'<s>(.*?)</s>', food_name)
             struck_str = f" \"{', '.join(struck_items)}\"" if struck_items else ""
 
-            msg = ""
-            # Prioritize OOS/Refund messages
-            if ref_val >= orig_p and orig_p > 0: # All items struck out, full refund
-                msg = f"К сожалению, нет никаких блюд и мы вернем ваши деньги: {ref_val} смн. ❌"
-            elif ref_val > 0: # Some items struck out, partial refund
-                msg = f"Извините, блюд{struck_str} нет в наличии, и мы вернем вам ваши деньги: {ref_val} смн. ❌"
-            elif field == 'qabyl': # Order accepted
+            if field == 'qabyl':
                 t_val = estimated_time if estimated_time is not None else old_est_time
                 time_str = ""
                 if t_val:
@@ -2757,13 +2787,28 @@ def api_orders_update_status():
                         time_str = f" Ваш заказ будет готов и доставлен примерно через {t_val} минут."
                     else:
                         time_str = f" Ваш заказ будет готов примерно через {t_val} минут."
-                msg = f"Заказ принят!{time_str} Пожалуйста, переведите оплату на номер 754169090." # Payment instruction
-            elif field == 'omoda': # Order ready
+
+                if ref_val >= orig_p and orig_p > 0:
+                    msg = f"К сожалению, нет никаких блюд и мы вернем ваши деньги: {ref_val} смн."
+                elif ref_val > 0:
+                    msg = f"Извините, блюд{struck_str} нет в наличии, и мы вернем вам ваши деньги: {ref_val} смн."
+                else:
+                    msg = f"Заказ принят!{time_str} Пожалуйста, переведите оплату на номер 754169090."
+            elif field == 'out_of_stock':
+                if ref_val >= orig_p and orig_p > 0:
+                    msg = f"К сожалению, нет никаких блюд и мы вернем ваши деньги: {ref_val} смн."
+                else:
+                    msg = f"Извините, блюд{struck_str} нет в наличии, и мы вернем вам ваши деньги: {ref_val} смн."
+            elif field == 'omoda':
+                # Пешгирӣ аз фиристодани паёми "Готов", агар заказ пурра бекор шуда бошад
+                if ref_val >= orig_p and orig_p > 0:
+                    conn.close()
+                    return jsonify({"ok": updated})
                 if del_type == 'pickup':
-                    msg = "Ваш заказ готов! Пожалуйста, заберите свои блюда."
+                    msg = "Ваш заказ готов! Пожалуйста, заберите свое блюдо."
                 else:
                     msg = "Ваш заказ готов! Через несколько минут мы его доставим. 🚀"
-            elif field == 'dostavka': # Delivery status
+            elif field == 'dostavka':
                 if db_value == 1:
                     msg = "Мы везем ваш заказ! 🚀🚗"
                 elif db_value == 2:
@@ -2771,7 +2816,7 @@ def api_orders_update_status():
                 else:
                     msg = "Статус доставки обновлен."
             else:
-                msg = "Статус заказа обновлен." # Generic update
+                msg = "Статус заказа обновлен."
 
             # Тоза кардани тегҳои <s> аз рӯйхати хӯрокҳо барои хабарномаи тоза
             display_food = re.sub(r'<s>.*?</s>', '', food_name)
@@ -2787,21 +2832,20 @@ def api_orders_update_status():
 
 @app.route("/api/orders/clear-all", methods=["POST"])
 def api_orders_clear_all():
-    conn = get_db_connection()
+    conn = sqlite3.connect(DB_PATH, timeout=20)
     cur = conn.cursor()
     cur.execute("DELETE FROM orders")
-    if not DATABASE_URL:
-        # Ин фармон рақамгузории (ID)-ро аз нав ба 1 мегардонад
-        cur.execute("DELETE FROM sqlite_sequence WHERE name='orders'")
+    # Ин фармон рақамгузории (ID)-ро аз нав ба 1 мегардонад
+    cur.execute("DELETE FROM sqlite_sequence WHERE name='orders'")
     conn.commit()
     conn.close()
     return jsonify({"ok": True})
 
 @app.route("/api/orders/delete/<int:order_id>", methods=["DELETE"])
 def api_order_delete_db(order_id):
-    conn = get_db_connection()
+    conn = sqlite3.connect(DB_PATH, timeout=20)
     cur = conn.cursor()
-    cur.execute(f"DELETE FROM orders WHERE id = {qm()}", (order_id,))
+    cur.execute("DELETE FROM orders WHERE id = ?", (order_id,))
     conn.commit()
     ok = cur.rowcount > 0
     conn.close()
@@ -2809,18 +2853,14 @@ def api_order_delete_db(order_id):
 
 @app.route("/api/orders/customer-status", methods=["GET"])
 def api_orders_customer_status():
-    # Тафтиши Токен
-    if request.headers.get("Authorization") != f"Bearer {API_TOKEN}":
-        return jsonify({"ok": False, "error": "unauthorized"}), 401
-
     customer_id = str(request.args.get("customer_id", "")).strip()
     if not customer_id:
         return jsonify({"ok": True, "orders": []})
 
-    conn = get_db_connection()
+    conn = sqlite3.connect(DB_PATH, timeout=20)
     cur = conn.cursor()
     cur.execute(
-        f"SELECT id, food, qabyl, omoda, created, estimated_time FROM orders WHERE customer_id = {qm()} ORDER BY id ASC",
+        "SELECT id, food, qabyl, omoda, created, estimated_time FROM orders WHERE customer_id = ? ORDER BY id ASC",
         (customer_id,),
     )
     rows = cur.fetchall()
@@ -2846,7 +2886,7 @@ def api_orders_customer_status():
 # FOOD MANAGEMENT API ROUTES
 @app.route("/api/foods/list", methods=["GET"])
 def api_foods_list():
-    conn = get_db_connection()
+    conn = sqlite3.connect(DB_PATH, timeout=20)
     cur = conn.cursor()
     cur.execute("SELECT id, name, price, category, image_url, description, subcategory FROM foods ORDER BY category, subcategory, name ASC")
     rows = cur.fetchall()
@@ -2898,11 +2938,11 @@ def api_foods_add():
     if not name or not price:
         return jsonify({"ok": False, "error": "missing_fields"}), 400
 
-    conn = get_db_connection()
+    conn = sqlite3.connect(DB_PATH, timeout=20)
     cur = conn.cursor()
     try:
         cur.execute(
-            f"INSERT INTO foods (name, price, category, subcategory, image_url, description, created) VALUES ({qm()},{qm()},{qm()},{qm()},{qm()},{qm()},{qm()})",
+            "INSERT INTO foods (name, price, category, subcategory, image_url, description, created) VALUES (?, ?, ?, ?, ?, ?, ?)",
             (name, price, category, subcategory, image_url, description, datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
         )
         food_id = cur.lastrowid
@@ -2952,11 +2992,11 @@ def api_foods_update(food_id):
     if not name or not price:
         return jsonify({"ok": False, "error": "missing_fields"}), 400
 
-    conn = get_db_connection()
+    conn = sqlite3.connect(DB_PATH, timeout=20)
     cur = conn.cursor()
     try:
         cur.execute(
-            f"UPDATE foods SET name = {qm()}, price = {qm()}, category = {qm()}, subcategory = {qm()}, image_url = {qm()}, description = {qm()} WHERE id = {qm()}",
+            "UPDATE foods SET name = ?, price = ?, category = ?, subcategory = ?, image_url = ?, description = ? WHERE id = ?",
             (name, price, category, subcategory, image_url, description, food_id),
         )
         conn.commit()
@@ -2972,9 +3012,9 @@ def api_foods_delete(food_id):
     if request.method == "OPTIONS":
         return ("", 204)
 
-    conn = get_db_connection()
+    conn = sqlite3.connect(DB_PATH, timeout=20)
     cur = conn.cursor()
-    cur.execute(f"DELETE FROM foods WHERE id = {qm()}", (food_id,))
+    cur.execute("DELETE FROM foods WHERE id = ?", (food_id,))
     conn.commit()
     deleted = cur.rowcount > 0
     conn.close()
@@ -2982,7 +3022,7 @@ def api_foods_delete(food_id):
 
 @app.route("/api/aktsii/list", methods=["GET"])
 def api_aktsii_list():
-    conn = get_db_connection(); cur = conn.cursor()
+    conn = sqlite3.connect(DB_PATH, timeout=20); cur = conn.cursor()
     cur.execute("SELECT id, title, price, description, image_url, created FROM aktsii ORDER BY id DESC")
     rows = cur.fetchall(); conn.close()
     return jsonify({"ok": True, "aktsii": [{"id": r[0], "title": r[1], "price": r[2], "description": r[3], "image_url": r[4], "created": r[5]} for r in rows]})
@@ -3005,16 +3045,16 @@ def api_aktsii_add():
             file.save(os.path.join(UPLOAD_FOLDER, filename))
             image_url = filename
 
-    conn = get_db_connection(); cur = conn.cursor()
-    cur.execute(f"INSERT INTO aktsii (title, price, description, image_url, created) VALUES ({qm()}, {qm()}, {qm()}, {qm()}, {qm()})",
+    conn = sqlite3.connect(DB_PATH, timeout=20); cur = conn.cursor()
+    cur.execute("INSERT INTO aktsii (title, price, description, image_url, created) VALUES (?, ?, ?, ?, ?)",
                 (title, price, description, image_url, datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
     conn.commit(); conn.close()
     return jsonify({"ok": True})
 
 @app.route("/api/aktsii/delete/<int:aktsii_id>", methods=["DELETE"])
 def api_aktsii_delete(aktsii_id):
-    conn = get_db_connection(); cur = conn.cursor()
-    cur.execute(f"DELETE FROM aktsii WHERE id = {qm()}", (aktsii_id,))
+    conn = sqlite3.connect(DB_PATH, timeout=20); cur = conn.cursor()
+    cur.execute("DELETE FROM aktsii WHERE id = ?", (aktsii_id,))
     conn.commit(); conn.close()
     return jsonify({"ok": True})
 
@@ -3034,11 +3074,10 @@ def api_full_order_history():
 
 @app.route("/api/orders/clear-full-history", methods=["POST"])
 def api_clear_full_history():
-    conn = get_db_connection()
+    conn = sqlite3.connect(DB_PATH, timeout=20)
     cur = conn.cursor()
     cur.execute("DELETE FROM full_order_history")
-    if not DATABASE_URL:
-        cur.execute("DELETE FROM sqlite_sequence WHERE name='full_order_history'")
+    cur.execute("DELETE FROM sqlite_sequence WHERE name='full_order_history'")
     conn.commit()
     conn.close()
     return jsonify({"ok": True})
@@ -3104,9 +3143,9 @@ def api_popular_foods():
 
 @app.route("/api/customers/delete/<string:customer_id>", methods=["DELETE"])
 def api_customers_delete(customer_id):
-    conn = get_db_connection()
+    conn = sqlite3.connect(DB_PATH, timeout=20)
     cur = conn.cursor()
-    cur.execute(f"DELETE FROM customers WHERE customer_id = {qm()}", (customer_id,))
+    cur.execute("DELETE FROM customers WHERE customer_id = ?", (customer_id,))
     conn.commit()
     ok = cur.rowcount > 0
     conn.close()
@@ -3114,19 +3153,18 @@ def api_customers_delete(customer_id):
 
 @app.route("/api/stats/clear-history", methods=["POST"])
 def api_stats_clear_history():
-    conn = get_db_connection()
+    conn = sqlite3.connect(DB_PATH, timeout=20)
     cur = conn.cursor()
     cur.execute("DELETE FROM revenue_history")
-    if not DATABASE_URL:
-        # Ин фармон рақамгузории (ID)-ро аз нав ба 1 мегардонад
-        cur.execute("DELETE FROM sqlite_sequence WHERE name='revenue_history'")
+    # Ин фармон рақамгузории (ID)-ро аз нав ба 1 мегардонад
+    cur.execute("DELETE FROM sqlite_sequence WHERE name='revenue_history'")
     conn.commit()
     conn.close()
     return jsonify({"ok": True})
 
 @app.route("/api/customers/list", methods=["GET"])
 def api_customers_list():
-    conn = get_db_connection()
+    conn = sqlite3.connect(DB_PATH, timeout=20)
     cur = conn.cursor()
     cur.execute("SELECT full_name, customer_id, created FROM customers ORDER BY id DESC")
     rows = cur.fetchall(); conn.close()
@@ -3135,105 +3173,17 @@ def api_customers_list():
 @app.route("/api/settings/get", methods=["GET"])
 def api_get_setting():
     key = request.args.get("key")
-    conn = get_db_connection(); cur = conn.cursor()
-    cur.execute(f"SELECT value FROM settings WHERE key = {qm()}", (key,)); r = cur.fetchone(); conn.close()
+    conn = sqlite3.connect(DB_PATH, timeout=20); cur = conn.cursor()
+    cur.execute("SELECT value FROM settings WHERE key = ?", (key,)); r = cur.fetchone(); conn.close()
     return jsonify({"ok": True, "val": r[0] if r else ""})
 
 @app.route("/api/settings/set", methods=["POST"])
 def api_set_setting():
     data = request.get_json()
-    conn = get_db_connection(); cur = conn.cursor()
-    upsert_sql = f"INSERT INTO settings (key, value) VALUES ({qm()}, {qm()}) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value" if DATABASE_URL else "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)"
-    cur.execute(upsert_sql, (data['key'], data['val']))
+    conn = sqlite3.connect(DB_PATH, timeout=20); cur = conn.cursor()
+    cur.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (data['key'], data['val']))
     conn.commit(); conn.close()
     return jsonify({"ok": True})
-
-@app.route("/api/push/subscribe", methods=["POST"])
-def api_push_subscribe():
-    data = request.get_json()
-    customer_id = data.get("customer_id")
-    sub_json = json.dumps(data.get("subscription"))
-    conn = get_db_connection(); cur = conn.cursor()
-    if DATABASE_URL:
-        cur.execute("INSERT INTO push_subscriptions (customer_id, subscription_json) VALUES (%s, %s) ON CONFLICT (customer_id) DO UPDATE SET subscription_json = EXCLUDED.subscription_json", (customer_id, sub_json))
-    else:
-        cur.execute("INSERT OR REPLACE INTO push_subscriptions (customer_id, subscription_json) VALUES (?, ?)", (customer_id, sub_json))
-    conn.commit(); conn.close()
-    return jsonify({"ok": True})
-
-@app.route("/api/customers/register", methods=["POST"])
-def api_customers_register():
-    data = request.get_json() or {}
-    full_name = data.get("full_name")
-    customer_id = data.get("customer_id")
-    if not full_name or not customer_id:
-        return jsonify({"ok": False, "error": "missing_data"}), 400
-    created = datetime.now().strftime("%d.%m.%Y %H:%M")
-    try:
-        conn = get_db_connection()
-        cur = conn.cursor()
-        if DATABASE_URL:
-            cur.execute("INSERT INTO customers (full_name, customer_id, created) VALUES (%s, %s, %s) ON CONFLICT (customer_id) DO NOTHING", (full_name, customer_id, created))
-        else:
-            cur.execute("INSERT OR IGNORE INTO customers (full_name, customer_id, created) VALUES (?, ?, ?)", (full_name, customer_id, created))
-        conn.commit(); conn.close()
-        return jsonify({"ok": True})
-    except Exception as e:
-        return jsonify({"ok": False, "error": str(e)}), 500
-
-verification_codes = {}
-@app.route("/api/auth/send-code", methods=["POST"])
-def api_send_code():
-    data = request.get_json() or {}
-    phone = data.get("phone", "").strip()
-    if not phone: return jsonify({"ok": False, "error": "no_phone"})
-    import random
-    code = str(random.randint(1000, 9999))
-    verification_codes[phone] = code
-    print(f"\n[SMS SERVICE] Коди тасдиқ барои {phone}: {code}\n")
-    return jsonify({"ok": True, "debug_code": code})
-
-@app.route("/api/auth/verify-code", methods=["POST"])
-def api_verify_code():
-    data = request.get_json() or {}
-    phone = data.get("phone", "").strip()
-    code = data.get("code", "").strip()
-    if phone in verification_codes and verification_codes[phone] == code:
-        del verification_codes[phone]
-        return jsonify({"ok": True})
-    return jsonify({"ok": False, "error": "wrong_code"})
-
-@app.route("/api/reviews/add", methods=["POST"])
-def api_reviews_add():
-    name = request.form.get("name")
-    text = request.form.get("text")
-    stars = request.form.get("stars")
-    image_url = ""
-    if 'image' in request.files:
-        file = request.files['image']
-        if file and file.filename != '':
-            filename = secure_filename(file.filename)
-            filename = f"rev_{datetime.now().strftime('%Y%m%d%H%M%S')}_{filename}"
-            if not os.path.exists(UPLOAD_FOLDER): os.makedirs(UPLOAD_FOLDER)
-            file.save(os.path.join(UPLOAD_FOLDER, filename))
-            image_url = filename
-    created = datetime.now().strftime("%d.%m.%Y %H:%M")
-    conn = sqlite3.connect(DB_PATH); cur = conn.cursor()
-    cur.execute("INSERT INTO reviews (name, text, stars, image_url, created) VALUES (?, ?, ?, ?, ?)", (name, text, stars, image_url, created))
-    conn.commit(); conn.close()
-    return jsonify({"ok": True})
-
-@app.route("/api/get-next-payment-phone")
-def api_get_next_phone():
-    PAYMENT_PHONE_NUMBERS = ["944975050", "754169090"]
-    conn = get_db_connection(); cur = conn.cursor()
-    cur.execute(f"SELECT value FROM settings WHERE key = 'last_payment_phone_index'")
-    r = cur.fetchone(); last_index = int(r[0]) if r else 0
-    next_index = (last_index + 1) % len(PAYMENT_PHONE_NUMBERS)
-    upsert_sql = f"INSERT INTO settings (key, value) VALUES ('last_payment_phone_index', {qm()}) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value" if DATABASE_URL else "INSERT OR REPLACE INTO settings (key, value) VALUES ('last_payment_phone_index', ?)"
-    cur.execute(upsert_sql, (str(next_index),))
-    conn.commit(); conn.close()
-    return jsonify({"ok": True, "phone": PAYMENT_PHONE_NUMBERS[next_index]})
 
 def get_local_ip():
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
