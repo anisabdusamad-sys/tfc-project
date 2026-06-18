@@ -4499,48 +4499,46 @@ def api_get_next_phone():
 @app.route("/api/orders/since", methods=["GET"])
 def api_orders_since():
     try:
-        last_id = int(request.args.get("last_id", 0))
-        conn = sqlite3.connect(DB_PATH, timeout=20); cur = conn.cursor()
-        cur.execute("SELECT id, customer, customer_id, food, price, qabyl, omoda, created, phone, delivery_type, delivery_latitude, delivery_longitude, delivery_address, estimated_time, tip FROM orders WHERE id > ?", (last_id,))
-        rows = cur.fetchall(); conn.close()
-        return jsonify({"ok": True, "orders": [{"id": r[0], "customer": r[1], "customer_id": r[2], "food": r[3], "price": r[4], "qabyl": bool(r[5]), "omoda": bool(r[6]), "created": r[7], "phone": r[8], "delivery_type": r[9], "delivery_latitude": r[10] if len(r) > 10 else "", "delivery_longitude": r[11] if len(r) > 11 else "", "delivery_address": r[12] if len(r) > 12 else "", "estimated_time": r[13], "tip": r[14] if len(r) > 14 else ""} for r in rows]})
-    except ValueError:
-        return jsonify({"ok": False, "error": "Invalid last_id parameter"}), 400
-    except sqlite3.Error as e:
-        print(f"Database error in api_orders_since: {e}")
-        return jsonify({"ok": False, "error": "Database error"}), 500
+        # Дархост ба Admin барои гирифтани заказҳои нав
+        resp = requests.get(
+            f"{ADMIN_URL}/api/orders/since",
+            params={"last_id": request.args.get("last_id", 0)},
+            headers={"X-API-KEY": API_KEY},
+            timeout=10
+        )
+        return jsonify(resp.json())
+    except Exception as e:
+        print(f"Proxy Since Error: {e}")
+        return jsonify({"ok": False, "error": "Admin server unreachable"}), 503
 
 @app.route("/api/orders/update-status", methods=["POST"])
 def api_orders_update_status():
-    data = request.get_json() or {}
-    order_id, field = data.get("id"), data.get("field")
-    db_value = int(data.get("value", 0))
-    estimated_time = data.get("estimated_time")
-    conn = sqlite3.connect(DB_PATH, timeout=20); cur = conn.cursor()
-    if field == 'qabyl' and estimated_time is not None:
-        cur.execute(f"UPDATE orders SET {field} = ?, estimated_time = ? WHERE id = ?", (db_value, estimated_time, order_id))
-    else:
-        cur.execute(f"UPDATE orders SET {field} = ? WHERE id = ?", (db_value, order_id))
-    conn.commit(); conn.close()
-
-    # Push Notification Logic
-    if db_value > 0:
-        # (Инҷо коди фиристодани Push-ро мисли bilol.py илова кардан мумкин аст)
-        pass
-    return jsonify({"ok": True})
+    """Навсозии статусро ба Admin мефиристонад"""
+    try:
+        resp = requests.post(
+            f"{ADMIN_URL}/api/orders/update-status",
+            headers={"X-API-KEY": API_KEY},
+            json=request.get_json(),
+            timeout=10
+        )
+        return jsonify(resp.json())
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 503
 
 @app.route("/api/orders/customer-status", methods=["GET"])
 def api_orders_customer_status():
     customer_id = request.args.get("customer_id", "")
     try:
-        conn = sqlite3.connect(DB_PATH, timeout=20); cur = conn.cursor()
-        cur.execute("SELECT id, food, qabyl, omoda, phone, delivery_type, dostavka, out_of_stock, refund, estimated_time, price FROM orders WHERE customer_id = ? ORDER BY id DESC LIMIT 1", (customer_id,))
-        r = cur.fetchone(); conn.close()
-        orders = [{"id": r[0], "food": r[1], "qabyl": bool(r[2]), "omoda": bool(r[3]), "phone": r[4], "delivery_type": r[5], "dostavka": int(r[6]), "out_of_stock": bool(r[7]), "refund": r[8] if r[8] is not None else 0, "estimated_time": r[9] if len(r) > 9 else 0, "price": r[10] if len(r) > 10 else "0"}] if r else []
-        return jsonify({"ok": True, "orders": orders})
+        # Санҷиши статус аз сервери Admin
+        resp = requests.get(
+            f"{ADMIN_URL}/api/orders/customer-status",
+            params={"customer_id": customer_id},
+            headers={"X-API-KEY": API_KEY},
+            timeout=10
+        )
+        return jsonify(resp.json())
     except Exception as e:
-        print(f"Status Error: {e}")
-        return jsonify({"ok": False, "error": str(e)})
+        return jsonify({"ok": False, "error": "Admin unreachable"})
 
 @app.route("/api/foods/list", methods=["GET"])
 def api_foods_list():
@@ -4550,14 +4548,11 @@ def api_foods_list():
 
 def get_orders():
     try:
-        with sqlite3.connect(DB_PATH) as conn:
-            conn.row_factory = sqlite3.Row
-            cur = conn.cursor()
-            cur.execute("SELECT food, price, qabyl, omoda FROM orders ORDER BY id DESC LIMIT 10")
-            orders = [dict(row) for row in cur.fetchall()]
-        return orders
-    except Exception as e:
-        print(f"Database error: {e}")
+        # Гирифтани рӯйхати кӯтоҳ барои саҳифаи асосӣ
+        resp = requests.get(f"{ADMIN_URL}/api/orders/since", params={"last_id": 0}, timeout=5)
+        data = resp.json()
+        return data.get("orders", [])[:10]
+    except:
         return []
 
 def get_all_foods():
