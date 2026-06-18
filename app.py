@@ -1725,7 +1725,7 @@ HTML_TEMPLATE = r"""
             </div>
             <div class="px-6 py-4 space-y-4 max-h-[75vh] overflow-y-auto">
                 <img id="info-food-image" src="" alt="" class="w-full max-h-64 object-contain rounded-2xl border border-white/10 bg-black/10 mx-auto" style="height: auto;">
-                <div class="p-3 rounded-2xl bg-white/5 border border-white/10">
+                <div class="p-3 rounded-2xl bg-white/5 border border-white/10" loading="lazy" decoding="async">
                     <div id="info-food-description" class="text-xs leading-relaxed whitespace-pre-wrap" style="color: var(--modal-text-muted);"></div>
                 </div>
                 <div class="p-3 rounded-2xl bg-white/5 border border-white/10 flex justify-between items-center">
@@ -1915,7 +1915,7 @@ HTML_TEMPLATE = r"""
             <div id="filtered-product-grid" class="grid product-grid gap-8">
                 {% for food in categories.get('Меню', []) %}
                 <div class="product-card food-card" data-food-id="{{ food.id }}" data-name="{{ food.name }}" data-subcategory="{{ food.subcategory|default('') }}" data-description="{{ food.description|e }}">
-                    <img src="{{ url_for('static', filename='images/' + food.image_url) if food.image_url else '' }}" alt="{{ food.name }}">
+                    <img src="{{ url_for('static', filename='images/' + food.image_url) if food.image_url else '' }}" alt="{{ food.name }}" loading="lazy" decoding="async">
                     <div class="food-description hidden">{{ food.description }}</div>
                     <div class="food-info-sign" title="Полная информация о блюде">...</div>
                     <div class="product-info">
@@ -1968,7 +1968,7 @@ HTML_TEMPLATE = r"""
             <div id="fastfood-filtered-product-grid" class="grid product-grid gap-8">
                 {% for food in categories.get('Фастфуд', []) %}
                 <div class="product-card food-card" data-food-id="{{ food.id }}" data-name="{{ food.name }}" data-subcategory="{{ food.subcategory|default('') }}" data-description="{{ food.description|e }}">
-                    <img src="{{ url_for('static', filename='images/' + food.image_url) if food.image_url else '' }}" alt="{{ food.name }}">
+                    <img src="{{ url_for('static', filename='images/' + food.image_url) if food.image_url else '' }}" alt="{{ food.name }}" loading="lazy" decoding="async">
                     <div class="food-description hidden">{{ food.description }}</div>
                     <div class="food-info-sign" title="Полная информация о блюде">...</div>
                     <div class="product-info">
@@ -2009,7 +2009,7 @@ HTML_TEMPLATE = r"""
             <div id="sushi-filtered-product-grid" class="grid product-grid gap-8">
                 {% for food in categories.get('Суши', []) %}
                 <div class="product-card food-card" data-food-id="{{ food.id }}" data-name="{{ food.name }}" data-subcategory="{{ food.subcategory|default('') }}" data-description="{{ food.description|e }}">
-                    <img src="{{ url_for('static', filename='images/' + food.image_url) if food.image_url else '' }}" alt="{{ food.name }}">
+                    <img src="{{ url_for('static', filename='images/' + food.image_url) if food.image_url else '' }}" alt="{{ food.name }}" loading="lazy" decoding="async">
                     <div class="food-description hidden">{{ food.description }}</div>
                     <div class="food-info-sign" title="Полная информация о блюде">...</div>
                     <div class="product-info">
@@ -2050,7 +2050,7 @@ HTML_TEMPLATE = r"""
             <div id="pizza-filtered-product-grid" class="grid product-grid gap-8">
                 {% for food in categories.get('Пицца', []) %}
                 <div class="product-card food-card" data-food-id="{{ food.id }}" data-name="{{ food.name }}" data-subcategory="{{ food.subcategory|default('') }}" data-description="{{ food.description|e }}">
-                    <img src="{{ url_for('static', filename='images/' + food.image_url) if food.image_url else '' }}" alt="{{ food.name }}">
+                    <img src="{{ url_for('static', filename='images/' + food.image_url) if food.image_url else '' }}" alt="{{ food.name }}" loading="lazy" decoding="async">
                     <div class="food-description hidden">{{ food.description }}</div>
                     <div class="food-info-sign" title="Полная информация о блюде">...</div>
                     <div class="product-info">
@@ -2099,7 +2099,7 @@ HTML_TEMPLATE = r"""
             <div id="summer-menu-filtered-product-grid" class="grid product-grid gap-8">
                 {% for food in categories.get('Летнее меню', []) %}
                 <div class="product-card food-card" data-food-id="{{ food.id }}" data-name="{{ food.name }}" data-subcategory="{{ food.subcategory|default('') }}" data-description="{{ food.description|e }}">
-                    <img src="{{ url_for('static', filename='images/' + food.image_url) if food.image_url else '' }}" alt="{{ food.name }}">
+                    <img src="{{ url_for('static', filename='images/' + food.image_url) if food.image_url else '' }}" alt="{{ food.name }}" loading="lazy" decoding="async">
                     <div class="food-description hidden">{{ food.description }}</div>
                     <div class="food-info-sign" title="Полная информация о блюде">...</div>
                     <div class="product-info">
@@ -2125,7 +2125,7 @@ HTML_TEMPLATE = r"""
             <div class="grid product-grid gap-8">
                 {% for food in categories.get('Комбо', []) %}
                 <div class="product-card food-card" data-food-id="{{ food.id }}" data-name="{{ food.name }}" data-subcategory="{{ food.subcategory|default('') }}" data-description="{{ food.description|e }}">
-                    <img src="{{ url_for('static', filename='images/' + food.image_url) if food.image_url else '' }}" alt="{{ food.name }}">
+                    <img src="{{ url_for('static', filename='images/' + food.image_url) if food.image_url else '' }}" alt="{{ food.name }}" loading="lazy" decoding="async">
                     <div class="food-description hidden">{{ food.description }}</div>
                     <div class="food-info-sign" title="Полная информация о блюде">...</div>
                     <div class="product-info">
@@ -2200,7 +2200,7 @@ HTML_TEMPLATE = r"""
                 <!-- 2. Отзывҳои суратдор -->
                 {% for food in [] %}
                 <div class="product-card">
-                    <img src="{{ url_for('static', filename='images/' + food.image_url) if food.image_url else '' }}" alt="{{ food.name }}">
+                    <img src="{{ url_for('static', filename='images/' + food.image_url) if food.image_url else '' }}" alt="{{ food.name }}" loading="lazy" decoding="async">
                     <div class="product-info">
                         <h3>{{ food.name }}</h3>
                         <div class="price-tag">{{ food.price }}с</div>
@@ -2240,7 +2240,7 @@ HTML_TEMPLATE = r"""
                             </div>
                         </div>
                         {% else %}
-                        <img src="{{ url_for('static', filename='images/' + item.image_url) }}" alt="{{ item.title }}" class="w-full aspect-video object-cover block">
+                        <img src="{{ url_for('static', filename='images/' + item.image_url) }}" alt="{{ item.title }}" class="w-full aspect-video object-cover block" loading="lazy" decoding="async">
                         {% endif %}
                     {% endif %}
                     <div class="product-info p-6">
@@ -2352,7 +2352,7 @@ HTML_TEMPLATE = r"""
                             </div>
                         </div>
                         {% else %}
-                        <img src="{{ url_for('static', filename='images/' + food.image_url) }}" alt="{{ food.name }}" class="h-44 w-full object-cover">
+                        <img src="{{ url_for('static', filename='images/' + food.image_url) }}" alt="{{ food.name }}" class="h-44 w-full object-cover" loading="lazy" decoding="async">
                         {% endif %}
                     {% endif %}
                     <div class="product-info !pb-6 px-5 !text-left">
@@ -4622,7 +4622,7 @@ def food_detail(food_id):
         
         food = dict(food)
         food['image_path'] = f"/static/images/{food['image_url']}" if food['image_url'] else ""
-        
+        food['image_path'] = f"/static/images/{food['image_url']}" if food['image_url'] else ""
         # Check if image is a video
         food['is_video'] = bool(food['image_url'] and food['image_url'].lower().endswith(('.mp4', '.webm', '.mov', '.ogg')))
         
