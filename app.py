@@ -4179,7 +4179,7 @@ HTML_TEMPLATE = r"""
                 const cleanPrice = parseFloat(String(last.price || 0).replace(',', '.').replace(/[^0-9.]/g, ''));
                 if (last.out_of_stock && parseFloat(last.refund) >= cleanPrice && cleanPrice > 0) {
                     statusType = "cancelled_oos";
-                    statusText = `К сожалению, нет никаких блюд и мы вернем ваши деньги: ${last.refund} смн. ❌`;
+                    statusText = `К сожалению, у нас нет таких блюд в данный момент, и мы вернем ваши деньги: ${last.refund} сомони. ❌`;
                 } else if (last.out_of_stock) {
                     const missingItems = [];
                     const regex = /<s>(.*?)<\/s>/g;
@@ -4188,7 +4188,7 @@ HTML_TEMPLATE = r"""
                         missingItems.push(match[1]);
                     }
                     if (missingItems.length > 0) {
-                        const refundTxt = last.refund > 0 ? ` Из-за того, что у нас нет такого блюда, мы вернем вам ваши деньги: ${last.refund} сомони.` : "";
+                        const refundTxt = last.refund > 0 ? ` К сожалению, у нас нет таких блюд в данный момент, и мы вернем ваши деньги: ${last.refund} сомони.` : "";
                         oosPart = `<br><span class="text-red-500 font-bold">Извините, "${missingItems.join(", ")}" нет в наличии.${refundTxt} ❌</span>`;
                     }
                 }
