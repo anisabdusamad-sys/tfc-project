@@ -4162,65 +4162,53 @@ HTML_TEMPLATE = r"""
                 const last = data.orders[data.orders.length - 1];
                 
                 let statusType = "pending";
-                let statusText = ""; 
+                let deliveryMsg = last.delivery_type === 'delivery' ? 'Доставка' : 'Самовывоз';
+                let statusText = "Ваш заказ <b>отправлен</b>! ✅";
                 let ok = false;
 
+                let oosPart = "";
                 // Тафтиш: Оё ҳамаи хӯрокҳо хат зада шудаанд?
                 const cleanPrice = parseFloat(String(last.price || 0).replace(',', '.').replace(/[^0-9.]/g, ''));
-                
-                // 1. Афзалияти баландтарин: Агар пурра аз сабаби набудани маҳсулот бекор карда шуда бошад
                 if (last.out_of_stock && parseFloat(last.refund) >= cleanPrice && cleanPrice > 0) {
                     statusType = "cancelled_oos";
                     statusText = `К сожалению, нет никаких блюд и мы вернем ваши деньги: ${last.refund} смн. ❌`;
-                } 
-                // 2. Афзалияти навбатӣ: Агар қисман аз сабаби набудани маҳсулот бекор карда шуда бошад
-                else if (last.out_of_stock) {
+                } else if (last.out_of_stock) {
                     const missingItems = [];
                     const regex = /<s>(.*?)<\/s>/g;
                     let match;
                     while ((match = regex.exec(last.food)) !== null) {
                         missingItems.push(match[1]);
                     }
-                    let refundTxt = "";
                     if (missingItems.length > 0) {
-                        refundTxt = last.refund > 0 ? ` Из-за того, что у нас нет такого блюда, мы вернем вам ваши деньги: ${last.refund} сомони.` : "";
+                        const refundTxt = last.refund > 0 ? ` Из-за того, что у нас нет такого блюда, мы вернем вам ваши деньги: ${last.refund} сомони.` : "";
+                        oosPart = `<br><span class="text-red-500 font-bold">Извините, "${missingItems.join(", ")}" нет в наличии.${refundTxt} ❌</span>`;
                     }
-                    statusText = `Извините, блюд "${missingItems.join(", ")}" нет в наличии.${refundTxt} ❌`;
-                    statusType = "partially_oos"; // Навъи ҳолати нав барои равшанӣ
                 }
-                // 3. Баъдан, ҳолати расониданро тафтиш кунед
-                else if (last.dostavka === 1) {
+
+                if (statusText.includes("К сожалению")) {
+                    // Матни махсус аллакай таъин шудааст
+                } else if (last.dostavka === 1) {
                     statusText = "Мы везем ваш заказ! 🚀🚗";
                     statusType = "shipping";
                 } else if (last.dostavka === 2) {
                     statusText = "Ваш заказ доставлен! Приятного аппетита! 🏠✅";
-                    statusType = "delivered"; // Аз "ready" ба "delivered" барои равшанӣ тағйир дода шуд
-                    ok = true;
-                } 
-                // 4. Баъдан, ҳолати омода (omoda) -ро тафтиш кунед
-                else if (last.omoda) {
+                    statusType = "ready"; ok = true;
+                } else if (last.omoda) {
                     statusText = last.delivery_type === 'pickup' ? "Ваш заказ готов! Пожалуйста, заберите свое блюдо." : "Ваш заказ готов! Через несколько минут мы его доставим. 🚀";
                     statusType = "ready"; ok = true;
-                } 
-                // 5. Баъдан, ҳолати қабулшуда (qabyl) -ро тафтиш кунед
-                else if (last.qabyl) {
+                } else if (last.qabyl) {
                     let timeMsg = "";
                     if (last.estimated_time) {
                         timeMsg = last.delivery_type === 'delivery' ? 
                             `<br><b>Ваш заказ будет готов и прислан через ${last.estimated_time} минут.</b>` : 
                             `<br><b>Ваш заказ будет готов примерно через ${last.estimated_time} минут.</b>`;
                     }
-                    if (last.payment_method === 'online') {
-                        statusText = `Заказ <b>принят</b> поваром! 👨‍🍳${timeMsg} Пожалуйста, переведите оплату на номер 754169090.`;
-                    } else { // cash
-                        statusText = `Заказ <b>принят</b> поваром! 👨‍🍳${timeMsg}`;
-                    }
+                    statusText = `Заказ <b>принят</b> поваром! 👨‍🍳${timeMsg}`;
                     statusType = "accepted";
                 }
-                // 6. Пешфарз: интизорӣ
-                else {
-                    statusText = "Ваш заказ <b>отправлен</b>! ✅";
-                    statusType = "pending";
+
+                if (statusType === "pending" || statusType === "accepted") {
+                    statusText += oosPart;
                 }
 
                 // Сохтани калиди беназир: ID-и заказ + статус
@@ -4511,46 +4499,48 @@ def api_get_next_phone():
 @app.route("/api/orders/since", methods=["GET"])
 def api_orders_since():
     try:
-        # Дархост ба Admin барои гирифтани заказҳои нав
-        resp = requests.get(
-            f"{ADMIN_URL}/api/orders/since",
-            params={"last_id": request.args.get("last_id", 0)},
-            headers={"X-API-KEY": API_KEY},
-            timeout=10
-        )
-        return jsonify(resp.json())
-    except Exception as e:
-        print(f"Proxy Since Error: {e}")
-        return jsonify({"ok": False, "error": "Admin server unreachable"}), 503
+        last_id = int(request.args.get("last_id", 0))
+        conn = sqlite3.connect(DB_PATH, timeout=20); cur = conn.cursor()
+        cur.execute("SELECT id, customer, customer_id, food, price, qabyl, omoda, created, phone, delivery_type, delivery_latitude, delivery_longitude, delivery_address, estimated_time, tip FROM orders WHERE id > ?", (last_id,))
+        rows = cur.fetchall(); conn.close()
+        return jsonify({"ok": True, "orders": [{"id": r[0], "customer": r[1], "customer_id": r[2], "food": r[3], "price": r[4], "qabyl": bool(r[5]), "omoda": bool(r[6]), "created": r[7], "phone": r[8], "delivery_type": r[9], "delivery_latitude": r[10] if len(r) > 10 else "", "delivery_longitude": r[11] if len(r) > 11 else "", "delivery_address": r[12] if len(r) > 12 else "", "estimated_time": r[13], "tip": r[14] if len(r) > 14 else ""} for r in rows]})
+    except ValueError:
+        return jsonify({"ok": False, "error": "Invalid last_id parameter"}), 400
+    except sqlite3.Error as e:
+        print(f"Database error in api_orders_since: {e}")
+        return jsonify({"ok": False, "error": "Database error"}), 500
 
 @app.route("/api/orders/update-status", methods=["POST"])
 def api_orders_update_status():
-    """Навсозии статусро ба Admin мефиристонад"""
-    try:
-        resp = requests.post(
-            f"{ADMIN_URL}/api/orders/update-status",
-            headers={"X-API-KEY": API_KEY},
-            json=request.get_json(),
-            timeout=10
-        )
-        return jsonify(resp.json())
-    except Exception as e:
-        return jsonify({"ok": False, "error": str(e)}), 503
+    data = request.get_json() or {}
+    order_id, field = data.get("id"), data.get("field")
+    db_value = int(data.get("value", 0))
+    estimated_time = data.get("estimated_time")
+    conn = sqlite3.connect(DB_PATH, timeout=20); cur = conn.cursor()
+    if field == 'qabyl' and estimated_time is not None:
+        cur.execute(f"UPDATE orders SET {field} = ?, estimated_time = ? WHERE id = ?", (db_value, estimated_time, order_id))
+    else:
+        cur.execute(f"UPDATE orders SET {field} = ? WHERE id = ?", (db_value, order_id))
+    conn.commit(); conn.close()
+
+    # Push Notification Logic
+    if db_value > 0:
+        # (Инҷо коди фиристодани Push-ро мисли bilol.py илова кардан мумкин аст)
+        pass
+    return jsonify({"ok": True})
 
 @app.route("/api/orders/customer-status", methods=["GET"])
 def api_orders_customer_status():
     customer_id = request.args.get("customer_id", "")
     try:
-        # Санҷиши статус аз сервери Admin
-        resp = requests.get(
-            f"{ADMIN_URL}/api/orders/customer-status",
-            params={"customer_id": customer_id},
-            headers={"X-API-KEY": API_KEY},
-            timeout=10
-        )
-        return jsonify(resp.json())
+        conn = sqlite3.connect(DB_PATH, timeout=20); cur = conn.cursor()
+        cur.execute("SELECT id, food, qabyl, omoda, phone, delivery_type, dostavka, out_of_stock, refund, estimated_time, price FROM orders WHERE customer_id = ? ORDER BY id DESC LIMIT 1", (customer_id,))
+        r = cur.fetchone(); conn.close()
+        orders = [{"id": r[0], "food": r[1], "qabyl": bool(r[2]), "omoda": bool(r[3]), "phone": r[4], "delivery_type": r[5], "dostavka": int(r[6]), "out_of_stock": bool(r[7]), "refund": r[8] if r[8] is not None else 0, "estimated_time": r[9] if len(r) > 9 else 0, "price": r[10] if len(r) > 10 else "0"}] if r else []
+        return jsonify({"ok": True, "orders": orders})
     except Exception as e:
-        return jsonify({"ok": False, "error": "Admin unreachable"})
+        print(f"Status Error: {e}")
+        return jsonify({"ok": False, "error": str(e)})
 
 @app.route("/api/foods/list", methods=["GET"])
 def api_foods_list():
@@ -4560,11 +4550,14 @@ def api_foods_list():
 
 def get_orders():
     try:
-        # Гирифтани рӯйхати кӯтоҳ барои саҳифаи асосӣ
-        resp = requests.get(f"{ADMIN_URL}/api/orders/since", params={"last_id": 0}, timeout=5)
-        data = resp.json()
-        return data.get("orders", [])[:10]
-    except:
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.row_factory = sqlite3.Row
+            cur = conn.cursor()
+            cur.execute("SELECT food, price, qabyl, omoda FROM orders ORDER BY id DESC LIMIT 10")
+            orders = [dict(row) for row in cur.fetchall()]
+        return orders
+    except Exception as e:
+        print(f"Database error: {e}")
         return []
 
 def get_all_foods():
