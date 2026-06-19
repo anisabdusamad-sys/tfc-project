@@ -17,6 +17,14 @@ UPLOAD_FOLDER = 'static/images'
 API_KEY = "TFC_SECRET_SECURE_KEY_2026"
 ADMIN_URL = "https://tfc-admin-panel.onrender.com" # ИНРО БАЪДИ DEPLOY ИВАЗ КУНЕД
 
+def get_backend_admin_url():
+    env_admin_url = os.environ.get("ADMIN_URL")
+    if env_admin_url:
+        return env_admin_url.rstrip('/')
+    if os.environ.get("RENDER") == "true":
+        return ADMIN_URL.rstrip('/')
+    return "http://127.0.0.1:5001"
+
 # Анбор барои нигоҳдории кодҳои тасдиқ (Phone: Code)
 verification_codes = {}
 
@@ -4370,12 +4378,31 @@ def api_reviews_delete(review_id):
 
 @app.route("/api/push/subscribe", methods=["POST"])
 def api_push_subscribe():
-    data = request.get_json()
+    data = request.get_json() or {}
     customer_id = data.get("customer_id")
-    sub_json = json.dumps(data.get("subscription"))
-    conn = sqlite3.connect(DB_PATH); cur = conn.cursor()
-    cur.execute("INSERT OR REPLACE INTO push_subscriptions (customer_id, subscription_json) VALUES (?, ?)", (customer_id, sub_json))
-    conn.commit(); conn.close()
+    subscription = data.get("subscription")
+    sub_json = json.dumps(subscription)
+    try:
+        conn = sqlite3.connect(DB_PATH, timeout=20); cur = conn.cursor()
+        cur.execute("INSERT OR REPLACE INTO push_subscriptions (customer_id, subscription_json) VALUES (?, ?)", (customer_id, sub_json))
+        conn.commit(); conn.close()
+    except Exception as e:
+        print(f"Local Push Subscribe Error: {e}")
+
+    try:
+        requests.post(
+            f"{get_backend_admin_url()}/api/external/sync",
+            headers={"X-API-KEY": API_KEY},
+            json={
+                "sync_type": "push_subscription",
+                "customer_id": customer_id,
+                "subscription_json": sub_json
+            },
+            timeout=5
+        )
+    except Exception as e:
+        print(f"Sync Push Subscribe Error: {e}")
+
     return jsonify({"ok": True})
 
 @app.route("/api/customers/register", methods=["POST"])
@@ -4389,7 +4416,7 @@ def api_customers_register():
     try:
         # Фиристодан ба сервери Admin тавассути API
         resp = requests.post(
-            f"{ADMIN_URL}/api/external/sync",
+            f"{get_backend_admin_url()}/api/external/sync",
             headers={"X-API-KEY": API_KEY},
             json={
                 "sync_type": "customer",
@@ -4470,7 +4497,7 @@ def api_orders_new():
     try:
         # Фиристодани заказ ба сервери Admin
         resp = requests.post(
-            f"{ADMIN_URL}/api/external/sync",
+            f"{get_backend_admin_url()}/api/external/sync",
             headers={"X-API-KEY": API_KEY},
             json={
                 "sync_type": "order",
@@ -4533,6 +4560,14 @@ def api_orders_update_status():
 def api_orders_customer_status():
     customer_id = request.args.get("customer_id", "")
     try:
+        url = f"{get_backend_admin_url()}/api/orders/customer-status?customer_id={customer_id}"
+        resp = requests.get(url, timeout=5)
+        if resp.ok:
+            return jsonify(resp.json())
+    except Exception as e:
+        print(f"Error fetching customer status from admin server: {e}")
+
+    try:
         conn = sqlite3.connect(DB_PATH, timeout=20); cur = conn.cursor()
         cur.execute("SELECT id, food, qabyl, omoda, phone, delivery_type, dostavka, out_of_stock, refund, estimated_time, price FROM orders WHERE customer_id = ? ORDER BY id DESC LIMIT 1", (customer_id,))
         r = cur.fetchone(); conn.close()
@@ -4549,34 +4584,58 @@ def api_foods_list():
     return jsonify({"ok": True, "foods": [{"id": r[0], "name": r[1], "price": r[2], "category": r[3], "image_url": r[4], "description": r[5]} for r in rows]})
 
 def get_orders():
+    orders = []
     try:
-        with sqlite3.connect(DB_PATH) as conn:
-            conn.row_factory = sqlite3.Row
-            cur = conn.cursor()
-            cur.execute("SELECT food, price, qabyl, omoda FROM orders ORDER BY id DESC LIMIT 10")
-            orders = [dict(row) for row in cur.fetchall()]
-        return orders
+        url = f"{get_backend_admin_url()}/api/orders/since?last_id=0"
+        resp = requests.get(url, timeout=5)
+        if resp.ok:
+            data = resp.json()
+            if data.get("ok") and "orders" in data:
+                orders = data["orders"][-10:]
+                orders.reverse()
     except Exception as e:
-        print(f"Database error: {e}")
-        return []
+        print(f"Error fetching recent orders from admin server: {e}")
+
+    if not orders:
+        try:
+            with sqlite3.connect(DB_PATH) as conn:
+                conn.row_factory = sqlite3.Row
+                cur = conn.cursor()
+                cur.execute("SELECT food, price, qabyl, omoda FROM orders ORDER BY id DESC LIMIT 10")
+                orders = [dict(row) for row in cur.fetchall()]
+        except Exception as e:
+            print(f"Database error in get_orders: {e}")
+            return []
+    return orders
 
 def get_all_foods():
+    foods = []
     try:
-        with sqlite3.connect(DB_PATH) as conn:
-            conn.row_factory = sqlite3.Row
-            cur = conn.cursor()
-            cur.execute("SELECT id, name, price, category, subcategory, image_url, description FROM foods")
-            foods = [dict(row) for row in cur.fetchall()]
-        
-        # Group by category and detect media type
-        cat_map = {}
-        for f in foods:
-            f['is_video'] = bool(f.get('image_url') and f['image_url'].lower().endswith(('.mp4', '.webm', '.mov', '.ogg')))
-            cat_map.setdefault(f['category'], []).append(f)
-        return cat_map
+        url = f"{get_backend_admin_url()}/api/foods/list"
+        resp = requests.get(url, timeout=5)
+        if resp.ok:
+            data = resp.json()
+            if data.get("ok") and "foods" in data:
+                foods = data["foods"]
     except Exception as e:
-        print(f"Database error in get_all_foods: {e}")
-        return {}
+        print(f"Error fetching foods from admin server: {e}")
+
+    if not foods:
+        try:
+            with sqlite3.connect(DB_PATH) as conn:
+                conn.row_factory = sqlite3.Row
+                cur = conn.cursor()
+                cur.execute("SELECT id, name, price, category, subcategory, image_url, description FROM foods")
+                foods = [dict(row) for row in cur.fetchall()]
+        except Exception as e:
+            print(f"Database error in get_all_foods: {e}")
+            return {}
+
+    cat_map = {}
+    for f in foods:
+        f['is_video'] = bool(f.get('image_url') and f['image_url'].lower().endswith(('.mp4', '.webm', '.mov', '.ogg')))
+        cat_map.setdefault(f['category'], []).append(f)
+    return cat_map
 
 def get_all_reviews():
     try:
@@ -4588,16 +4647,31 @@ def get_all_reviews():
     except: return []
 
 def get_all_aktsii():
+    aktsii = []
     try:
-        with sqlite3.connect(DB_PATH) as conn:
-            conn.row_factory = sqlite3.Row
-            cur = conn.cursor()
-            cur.execute("SELECT title, price, description, image_url, created FROM aktsii ORDER BY id DESC")
-            results = [dict(row) for row in cur.fetchall()]
-            for r in results:
-                r['is_video'] = bool(r.get('image_url') and r['image_url'].lower().endswith(('.mp4', '.webm', '.mov', '.ogg')))
-            return results
-    except: return []
+        url = f"{get_backend_admin_url()}/api/aktsii/list"
+        resp = requests.get(url, timeout=5)
+        if resp.ok:
+            data = resp.json()
+            if data.get("ok") and "aktsii" in data:
+                aktsii = data["aktsii"]
+    except Exception as e:
+        print(f"Error fetching aktsii from admin server: {e}")
+
+    if not aktsii:
+        try:
+            with sqlite3.connect(DB_PATH) as conn:
+                conn.row_factory = sqlite3.Row
+                cur = conn.cursor()
+                cur.execute("SELECT title, price, description, image_url, created FROM aktsii ORDER BY id DESC")
+                aktsii = [dict(row) for row in cur.fetchall()]
+        except Exception as e:
+            print(f"Database error in get_all_aktsii: {e}")
+            return []
+
+    for r in aktsii:
+        r['is_video'] = bool(r.get('image_url') and r['image_url'].lower().endswith(('.mp4', '.webm', '.mov', '.ogg')))
+    return aktsii
 
 @app.route('/')
 def home():

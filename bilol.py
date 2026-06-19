@@ -2567,6 +2567,13 @@ def api_external_sync():
             conn.commit()
             return jsonify({"ok": True})
 
+        elif sync_type == "push_subscription":
+            cust_id = data.get("customer_id")
+            sub_json = data.get("subscription_json")
+            cur.execute("INSERT OR REPLACE INTO push_subscriptions (customer_id, subscription_json) VALUES (?, ?)", (cust_id, sub_json))
+            conn.commit()
+            return jsonify({"ok": True})
+
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
     finally:
