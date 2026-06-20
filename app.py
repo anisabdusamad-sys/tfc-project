@@ -57,6 +57,7 @@ DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tfc_admin.db
 DEFAULT_ADMIN_API_BASE = "https://tfc-admin-panel.onrender.com"
 ADMIN_API_BASE = os.environ.get("ADMIN_API_BASE", DEFAULT_ADMIN_API_BASE).rstrip("/")
 ADMIN_SYNC_API_KEY = os.environ.get("ADMIN_SYNC_API_KEY", "TFC_SECRET_SECURE_KEY_2026")
+REMOTE_CACHE = {}
 
 def _is_local_request() -> bool:
     host = (request.host.split(":")[0] if request else "").lower()
@@ -73,17 +74,26 @@ def _use_remote_admin_api() -> bool:
 def _admin_api_base_for_template() -> str:
     return ADMIN_API_BASE if _use_remote_admin_api() else ""
 
-def _remote_json(path, timeout=4):
+def _remote_json(path, timeout=1.5, ttl=30):
     if not _use_remote_admin_api() or not ADMIN_API_BASE:
         return None
+    cache_key = path
+    now = datetime.now().timestamp()
+    cached = REMOTE_CACHE.get(cache_key)
+    if cached and now - cached["time"] < ttl:
+        return cached["data"]
     url = f"{ADMIN_API_BASE}{path}"
     try:
         with urllib.request.urlopen(url, timeout=timeout) as resp:
             if resp.status >= 400:
                 return None
-            return json.loads(resp.read().decode("utf-8"))
+            data = json.loads(resp.read().decode("utf-8"))
+            REMOTE_CACHE[cache_key] = {"time": now, "data": data}
+            return data
     except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, OSError) as e:
         print(f"Remote admin API fallback for {path}: {e}")
+        if cached:
+            return cached["data"]
         return None
 
 def _post_admin_sync(payload, timeout=4):
@@ -121,6 +131,12 @@ def media_src(filename):
     if value.startswith(("http://", "https://", "/static/")):
         return value
     return url_for("static", filename="images/" + value)
+
+@app.after_request
+def add_static_cache_headers(resp):
+    if request.path.startswith("/static/images/"):
+        resp.headers["Cache-Control"] = "public, max-age=604800, immutable"
+    return resp
 
 def init_db() -> None:
     conn = sqlite3.connect(DB_PATH, timeout=20) # Ensure timeout is applied here
@@ -536,7 +552,7 @@ FOOD_DETAIL_TEMPLATE = r"""
                         Ваш браузер не поддерживает видео.
                     </video>
                 {% elif food.image_path %}
-                    <img src="{{ food.image_path }}" alt="{{ food.name }}" class="w-full h-full object-contain mx-auto p-2">
+                    <img src="{{ food.image_path }}" alt="{{ food.name }}" class="w-full h-full object-contain mx-auto p-2" decoding="async" fetchpriority="high">
                 {% else %}
                     <div class="w-full h-full bg-gradient-to-br from-red-600 to-red-900 flex items-center justify-center">
                         <i class="fas fa-utensils text-white text-6xl opacity-30"></i>
@@ -1789,7 +1805,7 @@ HTML_TEMPLATE = r"""
                 </button>
             </div>
             <div class="px-6 py-4 space-y-4 max-h-[75vh] overflow-y-auto">
-                <img id="info-food-image" src="" alt="" class="w-full max-h-64 object-contain rounded-2xl border border-white/10 bg-black/10 mx-auto" style="height: auto;">
+                <img id="info-food-image" src="" alt="" class="w-full max-h-64 object-contain rounded-2xl border border-white/10 bg-black/10 mx-auto" style="height: auto;" loading="lazy" decoding="async">
                 <div class="p-3 rounded-2xl bg-white/5 border border-white/10">
                     <div id="info-food-description" class="text-xs leading-relaxed whitespace-pre-wrap" style="color: var(--modal-text-muted);"></div>
                 </div>
@@ -1980,7 +1996,7 @@ HTML_TEMPLATE = r"""
             <div id="filtered-product-grid" class="grid product-grid gap-8">
                 {% for food in categories.get('Меню', []) %}
                 <div class="product-card food-card" data-food-id="{{ food.id }}" data-name="{{ food.name }}" data-subcategory="{{ food.subcategory|default('') }}" data-description="{{ food.description|e }}">
-                    <img src="{{ media_src(food.image_url) if food.image_url else '' }}" alt="{{ food.name }}">
+                    <img src="{{ media_src(food.image_url) if food.image_url else '' }}" alt="{{ food.name }}" loading="lazy" decoding="async">
                     <div class="food-description hidden">{{ food.description }}</div>
                     <div class="food-info-sign" title="Полная информация о блюде">...</div>
                     <div class="product-info">
@@ -2033,7 +2049,7 @@ HTML_TEMPLATE = r"""
             <div id="fastfood-filtered-product-grid" class="grid product-grid gap-8">
                 {% for food in categories.get('Фастфуд', []) %}
                 <div class="product-card food-card" data-food-id="{{ food.id }}" data-name="{{ food.name }}" data-subcategory="{{ food.subcategory|default('') }}" data-description="{{ food.description|e }}">
-                    <img src="{{ media_src(food.image_url) if food.image_url else '' }}" alt="{{ food.name }}">
+                    <img src="{{ media_src(food.image_url) if food.image_url else '' }}" alt="{{ food.name }}" loading="lazy" decoding="async">
                     <div class="food-description hidden">{{ food.description }}</div>
                     <div class="food-info-sign" title="Полная информация о блюде">...</div>
                     <div class="product-info">
@@ -2074,7 +2090,7 @@ HTML_TEMPLATE = r"""
             <div id="sushi-filtered-product-grid" class="grid product-grid gap-8">
                 {% for food in categories.get('Суши', []) %}
                 <div class="product-card food-card" data-food-id="{{ food.id }}" data-name="{{ food.name }}" data-subcategory="{{ food.subcategory|default('') }}" data-description="{{ food.description|e }}">
-                    <img src="{{ media_src(food.image_url) if food.image_url else '' }}" alt="{{ food.name }}">
+                    <img src="{{ media_src(food.image_url) if food.image_url else '' }}" alt="{{ food.name }}" loading="lazy" decoding="async">
                     <div class="food-description hidden">{{ food.description }}</div>
                     <div class="food-info-sign" title="Полная информация о блюде">...</div>
                     <div class="product-info">
@@ -2115,7 +2131,7 @@ HTML_TEMPLATE = r"""
             <div id="pizza-filtered-product-grid" class="grid product-grid gap-8">
                 {% for food in categories.get('Пицца', []) %}
                 <div class="product-card food-card" data-food-id="{{ food.id }}" data-name="{{ food.name }}" data-subcategory="{{ food.subcategory|default('') }}" data-description="{{ food.description|e }}">
-                    <img src="{{ media_src(food.image_url) if food.image_url else '' }}" alt="{{ food.name }}">
+                    <img src="{{ media_src(food.image_url) if food.image_url else '' }}" alt="{{ food.name }}" loading="lazy" decoding="async">
                     <div class="food-description hidden">{{ food.description }}</div>
                     <div class="food-info-sign" title="Полная информация о блюде">...</div>
                     <div class="product-info">
@@ -2164,7 +2180,7 @@ HTML_TEMPLATE = r"""
             <div id="summer-menu-filtered-product-grid" class="grid product-grid gap-8">
                 {% for food in categories.get('Летнее меню', []) %}
                 <div class="product-card food-card" data-food-id="{{ food.id }}" data-name="{{ food.name }}" data-subcategory="{{ food.subcategory|default('') }}" data-description="{{ food.description|e }}">
-                    <img src="{{ media_src(food.image_url) if food.image_url else '' }}" alt="{{ food.name }}">
+                    <img src="{{ media_src(food.image_url) if food.image_url else '' }}" alt="{{ food.name }}" loading="lazy" decoding="async">
                     <div class="food-description hidden">{{ food.description }}</div>
                     <div class="food-info-sign" title="Полная информация о блюде">...</div>
                     <div class="product-info">
@@ -2190,7 +2206,7 @@ HTML_TEMPLATE = r"""
             <div class="grid product-grid gap-8">
                 {% for food in categories.get('Комбо', []) %}
                 <div class="product-card food-card" data-food-id="{{ food.id }}" data-name="{{ food.name }}" data-subcategory="{{ food.subcategory|default('') }}" data-description="{{ food.description|e }}">
-                    <img src="{{ media_src(food.image_url) if food.image_url else '' }}" alt="{{ food.name }}">
+                    <img src="{{ media_src(food.image_url) if food.image_url else '' }}" alt="{{ food.name }}" loading="lazy" decoding="async">
                     <div class="food-description hidden">{{ food.description }}</div>
                     <div class="food-info-sign" title="Полная информация о блюде">...</div>
                     <div class="product-info">
@@ -2241,7 +2257,7 @@ HTML_TEMPLATE = r"""
                 <div class="product-card text-review-card flex flex-col justify-between p-4" style="background: var(--card-bg); border: 1px dashed var(--notif-item-border-left);">
                     <div class="flex flex-col">
                         {% if rev.image_url %}
-                        <img src="{{ media_src(rev.image_url) }}" class="w-full aspect-square object-cover rounded-xl mb-3 shadow-lg">
+                        <img src="{{ media_src(rev.image_url) }}" class="w-full aspect-square object-cover rounded-xl mb-3 shadow-lg" loading="lazy" decoding="async">
                         {% endif %}
                         <div class="flex justify-between items-start mb-2">
                             <h5 class="font-bold text-[10px] uppercase" style="color: var(--tfc-gold);">{{ rev.name }}</h5>
@@ -2265,7 +2281,7 @@ HTML_TEMPLATE = r"""
                 <!-- 2. Отзывҳои суратдор -->
                 {% for food in [] %}
                 <div class="product-card">
-                    <img src="{{ media_src(food.image_url) if food.image_url else '' }}" alt="{{ food.name }}">
+                    <img src="{{ media_src(food.image_url) if food.image_url else '' }}" alt="{{ food.name }}" loading="lazy" decoding="async">
                     <div class="product-info">
                         <h3>{{ food.name }}</h3>
                         <div class="price-tag">{{ food.price }}с</div>
@@ -2305,7 +2321,7 @@ HTML_TEMPLATE = r"""
                             </div>
                         </div>
                         {% else %}
-                        <img src="{{ media_src(item.image_url) }}" alt="{{ item.title }}" class="w-full aspect-video object-cover block">
+                        <img src="{{ media_src(item.image_url) }}" alt="{{ item.title }}" class="w-full aspect-video object-cover block" loading="lazy" decoding="async">
                         {% endif %}
                     {% endif %}
                     <div class="product-info p-6">
@@ -2417,7 +2433,7 @@ HTML_TEMPLATE = r"""
                             </div>
                         </div>
                         {% else %}
-                        <img src="{{ media_src(food.image_url) }}" alt="{{ food.name }}" class="h-44 w-full object-cover">
+                        <img src="{{ media_src(food.image_url) }}" alt="{{ food.name }}" class="h-44 w-full object-cover" loading="lazy" decoding="async">
                         {% endif %}
                     {% endif %}
                     <div class="product-info !pb-6 px-5 !text-left">
@@ -4596,7 +4612,7 @@ def api_foods_list():
 
 def get_orders():
     try:
-        remote = _remote_json("/api/orders/since?last_id=0")
+        remote = _remote_json("/api/orders/since?last_id=0", timeout=1, ttl=5)
         if remote and remote.get("ok") and isinstance(remote.get("orders"), list):
             orders = remote["orders"][-10:]
             orders.reverse()
@@ -4613,7 +4629,7 @@ def get_orders():
 
 def get_all_foods():
     try:
-        remote = _remote_json("/api/foods/list")
+        remote = _remote_json("/api/foods/list", timeout=1.5, ttl=60)
         if remote and remote.get("ok") and isinstance(remote.get("foods"), list):
             foods = remote["foods"]
             for f in foods:
@@ -4646,7 +4662,7 @@ def get_all_reviews():
 
 def get_all_aktsii():
     try:
-        remote = _remote_json("/api/aktsii/list")
+        remote = _remote_json("/api/aktsii/list", timeout=1.5, ttl=60)
         if remote and remote.get("ok") and isinstance(remote.get("aktsii"), list):
             results = remote["aktsii"]
             for r in results:
@@ -4680,7 +4696,7 @@ def food_detail(food_id):
     """Display detailed information for a single food item"""
     try:
         food = None
-        remote = _remote_json("/api/foods/list")
+        remote = _remote_json("/api/foods/list", timeout=1.5, ttl=60)
         if remote and remote.get("ok") and isinstance(remote.get("foods"), list):
             food = next((f for f in remote["foods"] if int(f.get("id", -1)) == food_id), None)
             if food:

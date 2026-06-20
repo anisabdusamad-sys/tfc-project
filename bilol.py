@@ -2513,6 +2513,8 @@ def add_cors_headers(resp):
     resp.headers["Access-Control-Allow-Origin"] = "*"
     resp.headers["Access-Control-Allow-Methods"] = "GET,POST,OPTIONS"
     resp.headers["Access-Control-Allow-Headers"] = "Content-Type"
+    if request.path.startswith("/static/images/"):
+        resp.headers["Cache-Control"] = "public, max-age=604800, immutable"
     return resp
 
 
