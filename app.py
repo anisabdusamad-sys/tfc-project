@@ -132,6 +132,16 @@ def media_src(filename):
         return value
     return url_for("static", filename="images/" + value)
 
+def prefer_optimized_image(filename):
+    if not filename:
+        return filename
+    stem, ext = os.path.splitext(str(filename))
+    if ext.lower() in (".jpg", ".jpeg", ".png"):
+        webp_name = f"{stem}.webp"
+        if os.path.exists(os.path.join(UPLOAD_FOLDER, webp_name)):
+            return webp_name
+    return filename
+
 @app.after_request
 def add_static_cache_headers(resp):
     if request.path.startswith("/static/images/"):
@@ -420,7 +430,7 @@ def init_db() -> None:
     cur.execute("SELECT COUNT(*) FROM foods")
     if cur.fetchone()[0] == 0:
         for f in sample_foods:
-            name, price, cat, img = f[0], f[1], f[2], f[3]
+            name, price, cat, img = f[0], f[1], f[2], prefer_optimized_image(f[3])
             # Агар дарозии элемент 6 бошад, пас индекси 4 subcategory аст
             sub = f[4] if len(f) == 6 else ""
             created = f[-1]

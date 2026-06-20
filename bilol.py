@@ -7,9 +7,12 @@ import re
 from datetime import datetime
 from werkzeug.utils import secure_filename
 from pywebpush import webpush, WebPushException
+from PIL import Image, ImageOps, UnidentifiedImageError
 
 app = Flask(__name__)
 UPLOAD_FOLDER = 'static/images'
+IMAGE_MAX_SIZE = (1200, 1200)
+IMAGE_WEBP_QUALITY = 78
 
 # Калидҳо бояд бо app.py якхела бошанд
 VAPID_PUBLIC_KEY = "BCX7B8_p9v7Z-S-l1M0W4Y1Z2X3C4V5B6N7M8L9K0J1I2H3G4F5E6D7C8B9A0S1D2F3G4H5J6K7L8"
@@ -19,6 +22,47 @@ VAPID_CLAIMS = {"sub": "mailto:admin@tfc-kulob.tj"}
 API_KEY = "TFC_SECRET_SECURE_KEY_2026"
 
 DB_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "tfc_admin.db"))
+
+def save_uploaded_media(file, prefix=""):
+    if not file or file.filename == "":
+        return ""
+
+    original_name = secure_filename(file.filename)
+    stem, ext = os.path.splitext(original_name)
+    ext = ext.lower()
+    timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+    base_name = f"{prefix}{timestamp}_{stem}"
+
+    if not os.path.exists(UPLOAD_FOLDER):
+        os.makedirs(UPLOAD_FOLDER)
+
+    if ext in (".mp4", ".webm", ".mov", ".ogg"):
+        filename = f"{base_name}{ext}"
+        file.save(os.path.join(UPLOAD_FOLDER, filename))
+        return filename
+
+    try:
+        image = Image.open(file.stream)
+        image = ImageOps.exif_transpose(image)
+        image.thumbnail(IMAGE_MAX_SIZE, Image.Resampling.LANCZOS)
+        filename = f"{base_name}.webp"
+        image.save(os.path.join(UPLOAD_FOLDER, filename), "WEBP", quality=IMAGE_WEBP_QUALITY, method=6)
+        return filename
+    except (UnidentifiedImageError, OSError):
+        filename = f"{base_name}{ext or '.bin'}"
+        file.stream.seek(0)
+        file.save(os.path.join(UPLOAD_FOLDER, filename))
+        return filename
+
+def prefer_optimized_image(filename):
+    if not filename:
+        return filename
+    stem, ext = os.path.splitext(filename)
+    if ext.lower() in (".jpg", ".jpeg", ".png"):
+        webp_name = f"{stem}.webp"
+        if os.path.exists(os.path.join(UPLOAD_FOLDER, webp_name)):
+            return webp_name
+    return filename
 
 
 def init_db() -> None:
@@ -319,6 +363,7 @@ def init_db() -> None:
 
     # Ин қисм маълумоти рӯйхатро ба базаи маълумот менависад
     for f in foods_data:
+        f = (*f[:4], prefer_optimized_image(f[4]), *f[5:])
         cur.execute("""
             INSERT OR REPLACE INTO foods (name, price, category, subcategory, image_url, description, created)
             VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -2943,13 +2988,7 @@ def api_foods_add():
     if 'image' in request.files:
         file = request.files['image']
         if file and file.filename != '':
-            filename = secure_filename(file.filename)
-            # Илова кардани вақт барои номи беназир
-            filename = f"{datetime.now().strftime('%Y%m%d%H%M%S')}_{filename}"
-            if not os.path.exists(UPLOAD_FOLDER):
-                os.makedirs(UPLOAD_FOLDER)
-            file.save(os.path.join(UPLOAD_FOLDER, filename))
-            image_url = filename
+            image_url = save_uploaded_media(file)
 
     if not name or not price:
         return jsonify({"ok": False, "error": "missing_fields"}), 400
@@ -2998,12 +3037,7 @@ def api_foods_update(food_id):
     if 'image' in request.files:
         file = request.files['image']
         if file and file.filename != '':
-            filename = secure_filename(file.filename)
-            filename = f"{datetime.now().strftime('%Y%m%d%H%M%S')}_{filename}"
-            if not os.path.exists(UPLOAD_FOLDER):
-                os.makedirs(UPLOAD_FOLDER)
-            file.save(os.path.join(UPLOAD_FOLDER, filename))
-            image_url = filename
+            image_url = save_uploaded_media(file)
 
     if not name or not price:
         return jsonify({"ok": False, "error": "missing_fields"}), 400
@@ -3055,11 +3089,7 @@ def api_aktsii_add():
     if 'image' in request.files:
         file = request.files['image']
         if file and file.filename != '':
-            filename = secure_filename(file.filename)
-            filename = f"promo_{datetime.now().strftime('%Y%m%d%H%M%S')}_{filename}"
-            if not os.path.exists(UPLOAD_FOLDER): os.makedirs(UPLOAD_FOLDER)
-            file.save(os.path.join(UPLOAD_FOLDER, filename))
-            image_url = filename
+            image_url = save_uploaded_media(file, prefix="promo_")
 
     conn = sqlite3.connect(DB_PATH, timeout=20); cur = conn.cursor()
     cur.execute("INSERT INTO aktsii (title, price, description, image_url, created) VALUES (?, ?, ?, ?, ?)",
