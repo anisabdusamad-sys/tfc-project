@@ -2773,7 +2773,7 @@ def api_orders_update_status():
         if sub_row:
             sub_info = json.loads(sub_row[0])
             # Гирифтани маблағ ва рефунд барои муқоиса
-            cur.execute("SELECT refund, price FROM orders WHERE id = ?", (order_id,))
+            cur.execute("SELECT refund, price, qabyl, omoda, dostavka, out_of_stock, estimated_time, delivery_type, food FROM orders WHERE id = ?", (order_id,))
             order_data = cur.fetchone()
             if not order_data:
                 conn.close()
@@ -2783,7 +2783,8 @@ def api_orders_update_status():
             
             # Гирифтани payment_method барои паёми дуруст
             cur.execute("SELECT payment_method FROM orders WHERE id = ?", (order_id,))
-            payment_method = cur.fetchone()[0] if cur.fetchone() else 'online'
+            pm_row = cur.fetchone()
+            payment_method = pm_row[0] if pm_row else 'online'
 
             # Тоза кардани нархи аслӣ барои муқоиса
             try:

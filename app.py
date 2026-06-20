@@ -3,7 +3,9 @@ import sqlite3
 import json
 import random
 import os
-import requests
+import urllib.error
+import urllib.parse
+import urllib.request
 from flask import Flask, render_template_string, url_for, request, jsonify, send_from_directory, redirect
 from datetime import datetime
 import re
@@ -12,18 +14,6 @@ from werkzeug.utils import secure_filename
 
 app = Flask(__name__)
 UPLOAD_FOLDER = 'static/images'
-
-# Танзимоти API барои пайваст шудан ба Admin
-API_KEY = "TFC_SECRET_SECURE_KEY_2026"
-ADMIN_URL = "https://tfc-admin-panel.onrender.com" # ИНРО БАЪДИ DEPLOY ИВАЗ КУНЕД
-
-def get_backend_admin_url():
-    env_admin_url = os.environ.get("ADMIN_URL")
-    if env_admin_url:
-        return env_admin_url.rstrip('/')
-    if os.environ.get("RENDER") == "true":
-        return ADMIN_URL.rstrip('/')
-    return "http://127.0.0.1:5001"
 
 # Анбор барои нигоҳдории кодҳои тасдиқ (Phone: Code)
 verification_codes = {}
@@ -64,6 +54,73 @@ def get_next_payment_phone_for_rotation():
 
 # Rohi mutlaq baroi muvofiqat bo bilol.py
 DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tfc_admin.db")
+DEFAULT_ADMIN_API_BASE = "https://tfc-admin-panel.onrender.com"
+ADMIN_API_BASE = os.environ.get("ADMIN_API_BASE", DEFAULT_ADMIN_API_BASE).rstrip("/")
+ADMIN_SYNC_API_KEY = os.environ.get("ADMIN_SYNC_API_KEY", "TFC_SECRET_SECURE_KEY_2026")
+
+def _is_local_request() -> bool:
+    host = (request.host.split(":")[0] if request else "").lower()
+    return host in ("127.0.0.1", "localhost", "::1")
+
+def _use_remote_admin_api() -> bool:
+    forced = os.environ.get("FORCE_REMOTE_ADMIN_API", "").lower()
+    if forced in ("1", "true", "yes"):
+        return True
+    if forced in ("0", "false", "no"):
+        return False
+    return not _is_local_request()
+
+def _admin_api_base_for_template() -> str:
+    return ADMIN_API_BASE if _use_remote_admin_api() else ""
+
+def _remote_json(path, timeout=4):
+    if not _use_remote_admin_api() or not ADMIN_API_BASE:
+        return None
+    url = f"{ADMIN_API_BASE}{path}"
+    try:
+        with urllib.request.urlopen(url, timeout=timeout) as resp:
+            if resp.status >= 400:
+                return None
+            return json.loads(resp.read().decode("utf-8"))
+    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, OSError) as e:
+        print(f"Remote admin API fallback for {path}: {e}")
+        return None
+
+def _post_admin_sync(payload, timeout=4):
+    if not _use_remote_admin_api() or not ADMIN_API_BASE:
+        return False
+    body = json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(
+        f"{ADMIN_API_BASE}/api/external/sync",
+        data=body,
+        headers={
+            "Content-Type": "application/json",
+            "X-API-KEY": ADMIN_SYNC_API_KEY,
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return 200 <= resp.status < 300
+    except (urllib.error.URLError, TimeoutError, OSError) as e:
+        print(f"Remote admin sync failed: {e}")
+        return False
+
+def _admin_media_url(filename):
+    if not filename:
+        return ""
+    value = str(filename)
+    if value.startswith(("http://", "https://", "/static/")):
+        return value
+    return f"{ADMIN_API_BASE}/static/images/{urllib.parse.quote(value)}"
+
+def media_src(filename):
+    if not filename:
+        return ""
+    value = str(filename)
+    if value.startswith(("http://", "https://", "/static/")):
+        return value
+    return url_for("static", filename="images/" + value)
 
 def init_db() -> None:
     conn = sqlite3.connect(DB_PATH, timeout=20) # Ensure timeout is applied here
@@ -1733,7 +1790,7 @@ HTML_TEMPLATE = r"""
             </div>
             <div class="px-6 py-4 space-y-4 max-h-[75vh] overflow-y-auto">
                 <img id="info-food-image" src="" alt="" class="w-full max-h-64 object-contain rounded-2xl border border-white/10 bg-black/10 mx-auto" style="height: auto;">
-                <div class="p-3 rounded-2xl bg-white/5 border border-white/10" loading="lazy" decoding="async">
+                <div class="p-3 rounded-2xl bg-white/5 border border-white/10">
                     <div id="info-food-description" class="text-xs leading-relaxed whitespace-pre-wrap" style="color: var(--modal-text-muted);"></div>
                 </div>
                 <div class="p-3 rounded-2xl bg-white/5 border border-white/10 flex justify-between items-center">
@@ -1923,7 +1980,7 @@ HTML_TEMPLATE = r"""
             <div id="filtered-product-grid" class="grid product-grid gap-8">
                 {% for food in categories.get('Меню', []) %}
                 <div class="product-card food-card" data-food-id="{{ food.id }}" data-name="{{ food.name }}" data-subcategory="{{ food.subcategory|default('') }}" data-description="{{ food.description|e }}">
-                    <img src="{{ url_for('static', filename='images/' + food.image_url) if food.image_url else '' }}" alt="{{ food.name }}" loading="lazy" decoding="async">
+                    <img src="{{ media_src(food.image_url) if food.image_url else '' }}" alt="{{ food.name }}">
                     <div class="food-description hidden">{{ food.description }}</div>
                     <div class="food-info-sign" title="Полная информация о блюде">...</div>
                     <div class="product-info">
@@ -1976,7 +2033,7 @@ HTML_TEMPLATE = r"""
             <div id="fastfood-filtered-product-grid" class="grid product-grid gap-8">
                 {% for food in categories.get('Фастфуд', []) %}
                 <div class="product-card food-card" data-food-id="{{ food.id }}" data-name="{{ food.name }}" data-subcategory="{{ food.subcategory|default('') }}" data-description="{{ food.description|e }}">
-                    <img src="{{ url_for('static', filename='images/' + food.image_url) if food.image_url else '' }}" alt="{{ food.name }}" loading="lazy" decoding="async">
+                    <img src="{{ media_src(food.image_url) if food.image_url else '' }}" alt="{{ food.name }}">
                     <div class="food-description hidden">{{ food.description }}</div>
                     <div class="food-info-sign" title="Полная информация о блюде">...</div>
                     <div class="product-info">
@@ -2017,7 +2074,7 @@ HTML_TEMPLATE = r"""
             <div id="sushi-filtered-product-grid" class="grid product-grid gap-8">
                 {% for food in categories.get('Суши', []) %}
                 <div class="product-card food-card" data-food-id="{{ food.id }}" data-name="{{ food.name }}" data-subcategory="{{ food.subcategory|default('') }}" data-description="{{ food.description|e }}">
-                    <img src="{{ url_for('static', filename='images/' + food.image_url) if food.image_url else '' }}" alt="{{ food.name }}" loading="lazy" decoding="async">
+                    <img src="{{ media_src(food.image_url) if food.image_url else '' }}" alt="{{ food.name }}">
                     <div class="food-description hidden">{{ food.description }}</div>
                     <div class="food-info-sign" title="Полная информация о блюде">...</div>
                     <div class="product-info">
@@ -2058,7 +2115,7 @@ HTML_TEMPLATE = r"""
             <div id="pizza-filtered-product-grid" class="grid product-grid gap-8">
                 {% for food in categories.get('Пицца', []) %}
                 <div class="product-card food-card" data-food-id="{{ food.id }}" data-name="{{ food.name }}" data-subcategory="{{ food.subcategory|default('') }}" data-description="{{ food.description|e }}">
-                    <img src="{{ url_for('static', filename='images/' + food.image_url) if food.image_url else '' }}" alt="{{ food.name }}" loading="lazy" decoding="async">
+                    <img src="{{ media_src(food.image_url) if food.image_url else '' }}" alt="{{ food.name }}">
                     <div class="food-description hidden">{{ food.description }}</div>
                     <div class="food-info-sign" title="Полная информация о блюде">...</div>
                     <div class="product-info">
@@ -2107,7 +2164,7 @@ HTML_TEMPLATE = r"""
             <div id="summer-menu-filtered-product-grid" class="grid product-grid gap-8">
                 {% for food in categories.get('Летнее меню', []) %}
                 <div class="product-card food-card" data-food-id="{{ food.id }}" data-name="{{ food.name }}" data-subcategory="{{ food.subcategory|default('') }}" data-description="{{ food.description|e }}">
-                    <img src="{{ url_for('static', filename='images/' + food.image_url) if food.image_url else '' }}" alt="{{ food.name }}" loading="lazy" decoding="async">
+                    <img src="{{ media_src(food.image_url) if food.image_url else '' }}" alt="{{ food.name }}">
                     <div class="food-description hidden">{{ food.description }}</div>
                     <div class="food-info-sign" title="Полная информация о блюде">...</div>
                     <div class="product-info">
@@ -2133,7 +2190,7 @@ HTML_TEMPLATE = r"""
             <div class="grid product-grid gap-8">
                 {% for food in categories.get('Комбо', []) %}
                 <div class="product-card food-card" data-food-id="{{ food.id }}" data-name="{{ food.name }}" data-subcategory="{{ food.subcategory|default('') }}" data-description="{{ food.description|e }}">
-                    <img src="{{ url_for('static', filename='images/' + food.image_url) if food.image_url else '' }}" alt="{{ food.name }}" loading="lazy" decoding="async">
+                    <img src="{{ media_src(food.image_url) if food.image_url else '' }}" alt="{{ food.name }}">
                     <div class="food-description hidden">{{ food.description }}</div>
                     <div class="food-info-sign" title="Полная информация о блюде">...</div>
                     <div class="product-info">
@@ -2184,7 +2241,7 @@ HTML_TEMPLATE = r"""
                 <div class="product-card text-review-card flex flex-col justify-between p-4" style="background: var(--card-bg); border: 1px dashed var(--notif-item-border-left);">
                     <div class="flex flex-col">
                         {% if rev.image_url %}
-                        <img src="{{ url_for('static', filename='images/' + rev.image_url) }}" class="w-full aspect-square object-cover rounded-xl mb-3 shadow-lg">
+                        <img src="{{ media_src(rev.image_url) }}" class="w-full aspect-square object-cover rounded-xl mb-3 shadow-lg">
                         {% endif %}
                         <div class="flex justify-between items-start mb-2">
                             <h5 class="font-bold text-[10px] uppercase" style="color: var(--tfc-gold);">{{ rev.name }}</h5>
@@ -2208,7 +2265,7 @@ HTML_TEMPLATE = r"""
                 <!-- 2. Отзывҳои суратдор -->
                 {% for food in [] %}
                 <div class="product-card">
-                    <img src="{{ url_for('static', filename='images/' + food.image_url) if food.image_url else '' }}" alt="{{ food.name }}" loading="lazy" decoding="async">
+                    <img src="{{ media_src(food.image_url) if food.image_url else '' }}" alt="{{ food.name }}">
                     <div class="product-info">
                         <h3>{{ food.name }}</h3>
                         <div class="price-tag">{{ food.price }}с</div>
@@ -2238,7 +2295,7 @@ HTML_TEMPLATE = r"""
                         {% if item.is_video %}
                         <div class="relative overflow-hidden bg-black cursor-pointer" onclick="togglePlay('promo-media-{{ loop.index0 }}', this)">
                             <video id="promo-media-{{ loop.index0 }}" class="w-full h-auto max-h-[75vh] block" preload="metadata" playsinline loop>
-                                <source src="{{ url_for('static', filename='images/' + item.image_url) }}" type="video/mp4">
+                                <source src="{{ media_src(item.image_url) }}" type="video/mp4">
                                 Your browser does not support the video tag.
                             </video>
                             <div class="play-overlay absolute inset-0 flex items-center justify-center bg-black/30 transition-opacity duration-300">
@@ -2248,7 +2305,7 @@ HTML_TEMPLATE = r"""
                             </div>
                         </div>
                         {% else %}
-                        <img src="{{ url_for('static', filename='images/' + item.image_url) }}" alt="{{ item.title }}" class="w-full aspect-video object-cover block" loading="lazy" decoding="async">
+                        <img src="{{ media_src(item.image_url) }}" alt="{{ item.title }}" class="w-full aspect-video object-cover block">
                         {% endif %}
                     {% endif %}
                     <div class="product-info p-6">
@@ -2353,14 +2410,14 @@ HTML_TEMPLATE = r"""
                         {% if food.is_video %}
                         <div class="relative overflow-hidden bg-black cursor-pointer" onclick="togglePlay('v-media-{{ loop.index0 }}', this)">
                             <video id="v-media-{{ loop.index0 }}" class="w-full h-auto max-h-[60vh] block" preload="metadata" playsinline loop>
-                                <source src="{{ url_for('static', filename='images/' + food.image_url) }}">
+                                <source src="{{ media_src(food.image_url) }}">
                             </video>
                             <div class="play-overlay absolute inset-0 flex items-center justify-center bg-black/30 transition-opacity duration-300">
                                 <div class="w-12 h-12 rounded-full bg-red-600 flex items-center justify-center text-white text-xl shadow-[0_0_15px_rgba(228,0,43,0.5)]"><i class="fa-solid fa-play"></i></div>
                             </div>
                         </div>
                         {% else %}
-                        <img src="{{ url_for('static', filename='images/' + food.image_url) }}" alt="{{ food.name }}" class="h-44 w-full object-cover" loading="lazy" decoding="async">
+                        <img src="{{ media_src(food.image_url) }}" alt="{{ food.name }}" class="h-44 w-full object-cover">
                         {% endif %}
                     {% endif %}
                     <div class="product-info !pb-6 px-5 !text-left">
@@ -2760,10 +2817,8 @@ HTML_TEMPLATE = r"""
         }
 
         function urlBase64ToUint8Array(base64String) {
-            // Тоза кардани фосилаҳои иловагӣ аз аввал ва охири сатр
-            const cleanedBase64String = base64String.trim();
-            const padding = '='.repeat((4 - cleanedBase64String.length % 4) % 4);
-            const base64 = (cleanedBase64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+            const padding = '='.repeat((4 - base64String.length % 4) % 4);
+            const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
             const rawData = window.atob(base64);
             const outputArray = new Uint8Array(rawData.length);
             for (let i = 0; i < rawData.length; ++i) {
@@ -3297,30 +3352,13 @@ HTML_TEMPLATE = r"""
         let notificationsHistory = JSON.parse(localStorage.getItem("tfc_notifications_history") || "[]");
         let unreadNotifCount = parseInt(localStorage.getItem("tfc_unread_notif_count") || "0");
 
-        function cleanupOldNotifications() {
-            const twelveHours = 12 * 60 * 60 * 1000;
-            const now = Date.now();
-            let history = JSON.parse(localStorage.getItem("tfc_notifications_history") || "[]");
-            const initialLength = history.length;
-
-            // Танҳо хабарҳоеро нигоҳ медорем, ки аз 12 соат кӯҳна нестанд
-            history = history.filter(n => n.timestamp && (now - n.timestamp) < twelveHours);
-
-            if (history.length !== initialLength) {
-                notificationsHistory = history;
-                localStorage.setItem("tfc_notifications_history", JSON.stringify(history));
-                unreadNotifCount = history.filter(n => n.isNew).length;
-                localStorage.setItem("tfc_unread_notif_count", unreadNotifCount);
-                updateNotifBadge();
-                if (document.getElementById('notifications-section').style.display === 'block') {
-                    renderNotificationsList();
-                }
-            }
-        }
-
-        // Санҷиши аввалия ва баъдан ҳар 5 дақиқа барои тозакунии автоматӣ
-        cleanupOldNotifications();
-        setInterval(cleanupOldNotifications, 5 * 60 * 1000);
+        // Автоматикӣ тоза кардани хабарҳои аз 12 соат кӯҳна
+        const twelveHours = 12 * 60 * 60 * 1000;
+        const now = Date.now();
+        notificationsHistory = notificationsHistory.filter(n => !n.timestamp || (now - n.timestamp) < twelveHours);
+        localStorage.setItem("tfc_notifications_history", JSON.stringify(notificationsHistory));
+        unreadNotifCount = notificationsHistory.filter(n => n.isNew).length;
+        localStorage.setItem("tfc_unread_notif_count", unreadNotifCount);
 
         function updateNotifBadge() {
             const badge = document.getElementById('notif-count');
@@ -3493,7 +3531,12 @@ HTML_TEMPLATE = r"""
         window.addEventListener("scroll", updateTopControlsByScroll);
 
         function adminApiBase() {
-            return "";
+            const configured = "{{ admin_api_base }}";
+            const localHosts = ["127.0.0.1", "localhost"];
+            if (localHosts.includes(window.location.hostname)) {
+                return window.location.protocol + "//" + window.location.hostname + ":5001";
+            }
+            return configured;
         }
 
         let selectedOrderPayload = null;
@@ -3633,7 +3676,7 @@ HTML_TEMPLATE = r"""
                 .then(function (data) {
                     if (data && data.ok) {
                         const msg = "Ваш заказ <b>отправлен</b>! ✅";
-                        latestCustomerStatus = String(data.order_id) + "_pending";
+                        latestCustomerStatus = data.order_id + "_pending";
                         localStorage.setItem("tfc_last_notified_status", latestCustomerStatus);
                         showLiveStatus(msg, false);
 
@@ -3842,8 +3885,7 @@ HTML_TEMPLATE = r"""
                 phoneNode.focus();
                 return;
             } else { phoneError.classList.add("hidden"); }
-            // Иловаи таъхири кӯтоҳ барои дуруст кор кардани клик дар мобил
-            setTimeout(() => { showWarningBeforeSubmit(() => {
+            showWarningBeforeSubmit(() => {
                 showDeliverySelection(async (type, payPhone) => {
                     const total = cart.reduce((sum, item) => sum + (item.selectedPrice * item.qty), 0);
                     const foodList = cart.map((item, idx) => `${idx + 1}. ${item.food} [${item.selectedLabel}] x${item.qty}`).join(', ');
@@ -3855,7 +3897,7 @@ HTML_TEMPLATE = r"""
                         submitOrderFromCard({ food: foodList, price: String(total), phone: phone, delivery_type: type, payment_method: paymentMethod, payment_phone: payPhone });
                     }, payPhone);
                 });
-            }); }, 150);
+            });
         }
 
         function updateCartBadge() {
@@ -3994,9 +4036,6 @@ HTML_TEMPLATE = r"""
 
             // Тугма вақте фаъол мешавад, ки муштарӣ аз дигар барнома ба браузер бармегардад
             window.addEventListener('focus', unlockButton);
-            
-            // Автоматӣ фаъол кардани тугма пас аз 5 сония, агар корбар барномаро иваз накунад
-            setTimeout(unlockButton, 5000);
 
             window.copyAdminNumber = (text, btn) => {
                 navigator.clipboard.writeText(text).then(() => {
@@ -4061,11 +4100,8 @@ HTML_TEMPLATE = r"""
                     overlay.classList.add('pt-10');
                 };
                 addressInput.onblur = () => {
-                    // Илова кардани таъхири хурд, то ки клик ба тугма расад пеш аз он ки UI ҳаракат кунад
-                    setTimeout(() => {
-                        overlay.classList.replace('items-start', 'items-center');
-                        if (overlay.classList.contains('pt-10')) overlay.classList.remove('pt-10');
-                    }, 150);
+                    overlay.classList.replace('items-start', 'items-center');
+                    overlay.classList.remove('pt-10');
                 };
                 addressInput.focus();
             };
@@ -4096,12 +4132,7 @@ HTML_TEMPLATE = r"""
 
         function showLiveStatus(message, isOk) {
             // Илова ба таърихи хабарҳо
-            const lastEntry = notificationsHistory[notificationsHistory.length - 1];
-            if (lastEntry && lastEntry.message === message && (Date.now() - (lastEntry.timestamp || 0)) < 5000) {
-                // Агар хабар якхела бошад ва дар 5 сонияи охир омада бошад, онро такрор намекунем
-                return;
-            }
-
+            notificationsHistory.push({ message, isOk, time: new Date().toLocaleTimeString('ru-RU'), isNew: true });
             notificationsHistory.push({ 
                 message, 
                 isOk, 
@@ -4179,7 +4210,7 @@ HTML_TEMPLATE = r"""
                 const cleanPrice = parseFloat(String(last.price || 0).replace(',', '.').replace(/[^0-9.]/g, ''));
                 if (last.out_of_stock && parseFloat(last.refund) >= cleanPrice && cleanPrice > 0) {
                     statusType = "cancelled_oos";
-                    statusText = `К сожалению, у нас нет таких блюд в данный момент, и мы вернем ваши деньги: ${last.refund} сомони. ❌`;
+                    statusText = `К сожалению, нет никаких блюд и мы вернем ваши деньги: ${last.refund} смн. ❌`;
                 } else if (last.out_of_stock) {
                     const missingItems = [];
                     const regex = /<s>(.*?)<\/s>/g;
@@ -4188,7 +4219,7 @@ HTML_TEMPLATE = r"""
                         missingItems.push(match[1]);
                     }
                     if (missingItems.length > 0) {
-                        const refundTxt = last.refund > 0 ? ` К сожалению, у нас нет таких блюд в данный момент, и мы вернем ваши деньги: ${last.refund} сомони.` : "";
+                        const refundTxt = last.refund > 0 ? ` Из-за того, что у нас нет такого блюда, мы вернем вам ваши деньги: ${last.refund} сомони.` : "";
                         oosPart = `<br><span class="text-red-500 font-bold">Извините, "${missingItems.join(", ")}" нет в наличии.${refundTxt} ❌</span>`;
                     }
                 }
@@ -4220,7 +4251,7 @@ HTML_TEMPLATE = r"""
                 }
 
                 // Сохтани калиди беназир: ID-и заказ + статус
-                const statusKey = String(last.id) + "_" + statusType;
+                const statusKey = last.id + "_" + statusType;
 
                 if (statusKey !== latestCustomerStatus) {
                     latestCustomerStatus = statusKey;
@@ -4378,31 +4409,17 @@ def api_reviews_delete(review_id):
 
 @app.route("/api/push/subscribe", methods=["POST"])
 def api_push_subscribe():
-    data = request.get_json() or {}
+    data = request.get_json()
     customer_id = data.get("customer_id")
-    subscription = data.get("subscription")
-    sub_json = json.dumps(subscription)
-    try:
-        conn = sqlite3.connect(DB_PATH, timeout=20); cur = conn.cursor()
-        cur.execute("INSERT OR REPLACE INTO push_subscriptions (customer_id, subscription_json) VALUES (?, ?)", (customer_id, sub_json))
-        conn.commit(); conn.close()
-    except Exception as e:
-        print(f"Local Push Subscribe Error: {e}")
-
-    try:
-        requests.post(
-            f"{get_backend_admin_url()}/api/external/sync",
-            headers={"X-API-KEY": API_KEY},
-            json={
-                "sync_type": "push_subscription",
-                "customer_id": customer_id,
-                "subscription_json": sub_json
-            },
-            timeout=5
-        )
-    except Exception as e:
-        print(f"Sync Push Subscribe Error: {e}")
-
+    sub_json = json.dumps(data.get("subscription"))
+    conn = sqlite3.connect(DB_PATH); cur = conn.cursor()
+    cur.execute("INSERT OR REPLACE INTO push_subscriptions (customer_id, subscription_json) VALUES (?, ?)", (customer_id, sub_json))
+    conn.commit(); conn.close()
+    _post_admin_sync({
+        "sync_type": "push_subscription",
+        "customer_id": customer_id,
+        "subscription_json": sub_json,
+    })
     return jsonify({"ok": True})
 
 @app.route("/api/customers/register", methods=["POST"])
@@ -4413,22 +4430,22 @@ def api_customers_register():
     if not full_name or not customer_id:
         return jsonify({"ok": False, "error": "missing_data"}), 400
     
+    created = datetime.now().strftime("%d.%m.%Y %H:%M")
     try:
-        # Фиристодан ба сервери Admin тавассути API
-        resp = requests.post(
-            f"{get_backend_admin_url()}/api/external/sync",
-            headers={"X-API-KEY": API_KEY},
-            json={
-                "sync_type": "customer",
-                "full_name": full_name,
-                "customer_id": customer_id
-            },
-            timeout=10
-        )
-        return jsonify(resp.json())
+        conn = sqlite3.connect(DB_PATH)
+        cur = conn.cursor()
+        cur.execute("INSERT OR IGNORE INTO customers (full_name, customer_id, created) VALUES (?, ?, ?)", 
+                    (full_name, customer_id, created))
+        conn.commit()
+        conn.close()
+        _post_admin_sync({
+            "sync_type": "customer",
+            "full_name": full_name,
+            "customer_id": customer_id,
+        })
+        return jsonify({"ok": True})
     except Exception as e:
-        print(f"Sync Error: {e}")
-        return jsonify({"ok": False, "error": "Admin server unreachable"}), 503
+        return jsonify({"ok": False, "error": str(e)}), 500
 
 @app.route("/api/auth/send-code", methods=["POST"])
 def api_send_code():
@@ -4493,30 +4510,32 @@ def api_orders_new():
 
     if not tip:
         tip = "Наличными 💵" if payment_method == "cash" else f"Картой 💳 ({payment_phone})"
+    created = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    conn = sqlite3.connect(DB_PATH, timeout=20)
+    cur = conn.cursor() # Ensure timeout is applied here
+    # Insert bo hamai maydonho baroi durust namoyish shudan dar admin
+    cur.execute("""
+        INSERT INTO orders (customer, customer_id, food, price, phone, delivery_type, tip, delivery_latitude, delivery_longitude, delivery_address, payment_method, qabyl, omoda, dostavka, created)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 0, ?)
+    """, (customer, customer_id, food, price, phone, delivery_type, tip, delivery_latitude, delivery_longitude, delivery_address, payment_method, created))
+    order_id = cur.lastrowid
     
+    # Сабти заказ дар таърихи доимӣ (Архив), то пас аз нест кардан боқӣ монад
+    cur.execute(
+        "INSERT INTO full_order_history (customer, customer_id, food, price, phone, delivery_type, tip, payment_method, created) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (customer, customer_id, food, price, phone, delivery_type, tip, payment_method, created)
+    )
+
+    # Сабти маблағ дар таърихи доимӣ
     try:
-        # Фиристодани заказ ба сервери Admin
-        resp = requests.post(
-            f"{get_backend_admin_url()}/api/external/sync",
-            headers={"X-API-KEY": API_KEY},
-            json={
-                "sync_type": "order",
-                "customer": customer,
-                "customer_id": customer_id,
-                "food": food,
-                "price": price,
-                "phone": phone,
-                "delivery_type": delivery_type,
-                "delivery_address": delivery_address,
-                "payment_method": payment_method,
-                "tip": tip
-            },
-            timeout=15
-        )
-        return jsonify(resp.json())
-    except Exception as e:
-        print(f"Order Sync Error: {e}")
-        return jsonify({"ok": False, "error": "Admin server unreachable"}), 503
+        p_clean = "".join(c for c in str(price).replace(',', '.') if c.isdigit() or c == '.')
+        amount = float(p_clean) if p_clean else 0.0
+        cur.execute("INSERT INTO revenue_history (amount, day, customer_id) VALUES (?, ?, ?)", (amount, datetime.now().strftime("%Y-%m-%d"), customer_id))
+    except: pass
+
+    conn.commit()
+    conn.close()
+    return jsonify({"ok": True, "order_id": order_id})
 
 @app.route("/api/get-next-payment-phone")
 def api_get_next_phone():
@@ -4560,14 +4579,6 @@ def api_orders_update_status():
 def api_orders_customer_status():
     customer_id = request.args.get("customer_id", "")
     try:
-        url = f"{get_backend_admin_url()}/api/orders/customer-status?customer_id={customer_id}"
-        resp = requests.get(url, timeout=5)
-        if resp.ok:
-            return jsonify(resp.json())
-    except Exception as e:
-        print(f"Error fetching customer status from admin server: {e}")
-
-    try:
         conn = sqlite3.connect(DB_PATH, timeout=20); cur = conn.cursor()
         cur.execute("SELECT id, food, qabyl, omoda, phone, delivery_type, dostavka, out_of_stock, refund, estimated_time, price FROM orders WHERE customer_id = ? ORDER BY id DESC LIMIT 1", (customer_id,))
         r = cur.fetchone(); conn.close()
@@ -4584,58 +4595,45 @@ def api_foods_list():
     return jsonify({"ok": True, "foods": [{"id": r[0], "name": r[1], "price": r[2], "category": r[3], "image_url": r[4], "description": r[5]} for r in rows]})
 
 def get_orders():
-    orders = []
     try:
-        url = f"{get_backend_admin_url()}/api/orders/since?last_id=0"
-        resp = requests.get(url, timeout=5)
-        if resp.ok:
-            data = resp.json()
-            if data.get("ok") and "orders" in data:
-                orders = data["orders"][-10:]
-                orders.reverse()
-    except Exception as e:
-        print(f"Error fetching recent orders from admin server: {e}")
-
-    if not orders:
-        try:
+        remote = _remote_json("/api/orders/since?last_id=0")
+        if remote and remote.get("ok") and isinstance(remote.get("orders"), list):
+            orders = remote["orders"][-10:]
+            orders.reverse()
+        else:
             with sqlite3.connect(DB_PATH) as conn:
                 conn.row_factory = sqlite3.Row
                 cur = conn.cursor()
                 cur.execute("SELECT food, price, qabyl, omoda FROM orders ORDER BY id DESC LIMIT 10")
                 orders = [dict(row) for row in cur.fetchall()]
-        except Exception as e:
-            print(f"Database error in get_orders: {e}")
-            return []
-    return orders
+        return orders
+    except Exception as e:
+        print(f"Database error: {e}")
+        return []
 
 def get_all_foods():
-    foods = []
     try:
-        url = f"{get_backend_admin_url()}/api/foods/list"
-        resp = requests.get(url, timeout=5)
-        if resp.ok:
-            data = resp.json()
-            if data.get("ok") and "foods" in data:
-                foods = data["foods"]
-    except Exception as e:
-        print(f"Error fetching foods from admin server: {e}")
-
-    if not foods:
-        try:
+        remote = _remote_json("/api/foods/list")
+        if remote and remote.get("ok") and isinstance(remote.get("foods"), list):
+            foods = remote["foods"]
+            for f in foods:
+                f["image_url"] = _admin_media_url(f.get("image_url", ""))
+        else:
             with sqlite3.connect(DB_PATH) as conn:
                 conn.row_factory = sqlite3.Row
                 cur = conn.cursor()
                 cur.execute("SELECT id, name, price, category, subcategory, image_url, description FROM foods")
                 foods = [dict(row) for row in cur.fetchall()]
-        except Exception as e:
-            print(f"Database error in get_all_foods: {e}")
-            return {}
-
-    cat_map = {}
-    for f in foods:
-        f['is_video'] = bool(f.get('image_url') and f['image_url'].lower().endswith(('.mp4', '.webm', '.mov', '.ogg')))
-        cat_map.setdefault(f['category'], []).append(f)
-    return cat_map
+        
+        # Group by category and detect media type
+        cat_map = {}
+        for f in foods:
+            f['is_video'] = bool(f.get('image_url') and f['image_url'].lower().endswith(('.mp4', '.webm', '.mov', '.ogg')))
+            cat_map.setdefault(f['category'], []).append(f)
+        return cat_map
+    except Exception as e:
+        print(f"Database error in get_all_foods: {e}")
+        return {}
 
 def get_all_reviews():
     try:
@@ -4647,56 +4645,65 @@ def get_all_reviews():
     except: return []
 
 def get_all_aktsii():
-    aktsii = []
     try:
-        url = f"{get_backend_admin_url()}/api/aktsii/list"
-        resp = requests.get(url, timeout=5)
-        if resp.ok:
-            data = resp.json()
-            if data.get("ok") and "aktsii" in data:
-                aktsii = data["aktsii"]
-    except Exception as e:
-        print(f"Error fetching aktsii from admin server: {e}")
-
-    if not aktsii:
-        try:
+        remote = _remote_json("/api/aktsii/list")
+        if remote and remote.get("ok") and isinstance(remote.get("aktsii"), list):
+            results = remote["aktsii"]
+            for r in results:
+                r["image_url"] = _admin_media_url(r.get("image_url", ""))
+        else:
             with sqlite3.connect(DB_PATH) as conn:
                 conn.row_factory = sqlite3.Row
                 cur = conn.cursor()
                 cur.execute("SELECT title, price, description, image_url, created FROM aktsii ORDER BY id DESC")
-                aktsii = [dict(row) for row in cur.fetchall()]
-        except Exception as e:
-            print(f"Database error in get_all_aktsii: {e}")
-            return []
-
-    for r in aktsii:
-        r['is_video'] = bool(r.get('image_url') and r['image_url'].lower().endswith(('.mp4', '.webm', '.mov', '.ogg')))
-    return aktsii
+                results = [dict(row) for row in cur.fetchall()]
+        for r in results:
+            r['is_video'] = bool(r.get('image_url') and r['image_url'].lower().endswith(('.mp4', '.webm', '.mov', '.ogg')))
+        return results
+    except: return []
 
 @app.route('/')
 def home():
-    return render_template_string(HTML_TEMPLATE, orders=get_orders(), categories=get_all_foods(), text_reviews=get_all_reviews(), aktsii=get_all_aktsii(), vapid_public_key=VAPID_PUBLIC_KEY)
+    return render_template_string(
+        HTML_TEMPLATE,
+        orders=get_orders(),
+        categories=get_all_foods(),
+        text_reviews=get_all_reviews(),
+        aktsii=get_all_aktsii(),
+        vapid_public_key=VAPID_PUBLIC_KEY,
+        admin_api_base=_admin_api_base_for_template(),
+        media_src=media_src,
+    )
 
 @app.route('/food/<int:food_id>')
 def food_detail(food_id):
     """Display detailed information for a single food item"""
     try:
-        conn = sqlite3.connect(DB_PATH, timeout=20)
-        conn.row_factory = sqlite3.Row
-        cur = conn.cursor()
-        cur.execute("""
-            SELECT id, name, price, category, description, image_url, created
-            FROM foods WHERE id = ?
-        """, (food_id,))
-        food = cur.fetchone()
-        conn.close()
+        food = None
+        remote = _remote_json("/api/foods/list")
+        if remote and remote.get("ok") and isinstance(remote.get("foods"), list):
+            food = next((f for f in remote["foods"] if int(f.get("id", -1)) == food_id), None)
+            if food:
+                food = dict(food)
+                food.setdefault("created", "")
+                food["image_url"] = _admin_media_url(food.get("image_url", ""))
+        if not food:
+            conn = sqlite3.connect(DB_PATH, timeout=20)
+            conn.row_factory = sqlite3.Row
+            cur = conn.cursor()
+            cur.execute("""
+                SELECT id, name, price, category, description, image_url, created
+                FROM foods WHERE id = ?
+            """, (food_id,))
+            food = cur.fetchone()
+            conn.close()
         
         if not food:
             return redirect('/')
         
         food = dict(food)
-        food['image_path'] = f"/static/images/{food['image_url']}" if food['image_url'] else ""
-        food['image_path'] = f"/static/images/{food['image_url']}" if food['image_url'] else ""
+        food['image_path'] = media_src(food['image_url']) if food['image_url'] else ""
+        
         # Check if image is a video
         food['is_video'] = bool(food['image_url'] and food['image_url'].lower().endswith(('.mp4', '.webm', '.mov', '.ogg')))
         
