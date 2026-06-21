@@ -1,11 +1,9 @@
 import socket
-import sqlite3
+import psycopg2
+from psycopg2 import extras
 import json
 import random
 import os
-import urllib.error
-import urllib.parse
-import urllib.request
 from flask import Flask, render_template_string, url_for, request, jsonify, send_from_directory, redirect
 from datetime import datetime
 import re
@@ -15,11 +13,17 @@ from werkzeug.utils import secure_filename
 app = Flask(__name__)
 UPLOAD_FOLDER = 'static/images'
 
+# PostgreSQL Connection URL
+DATABASE_URL = os.environ.get('DATABASE_URL', 'postgresql://tfcdb_4eoa_user:hIRovZCZRqkCxstsP3U98O5bRzjNLlm0@dpg-d8rnghmgvqtc73f9lmj0-a.virginia-postgres.render.com/tfcdb_4eoa')
+
+def get_db_connection():
+    conn = psycopg2.connect(DATABASE_URL)
+    return conn
+
 # Анбор барои нигоҳдории кодҳои тасдиқ (Phone: Code)
 verification_codes = {}
 
-# VAPID Keys (Барои амният лозим аст)
-# ДИҚҚАТ: Ин калидҳоро иваз накунед, онҳо бо sw.js мувофиқанд
+# VAPID Keys
 VAPID_PUBLIC_KEY = "BCX7B8_p9v7Z-S-l1M0W4Y1Z2X3C4V5B6N7M8L9K0J1I2H3G4F5E6D7C8B9A0S1D2F3G4H5J6K7L8"
 VAPID_PRIVATE_KEY = "m1N2B3V4C5X6Z7A8S9D0F1G2H3J4K5L6m1N2B3V4C5X"
 VAPID_CLAIMS = {"sub": "mailto:admin@tfc-kulob.tj"}
@@ -29,18 +33,18 @@ PAYMENT_PHONE_NUMBERS = ["944975050", "754169090"]
 
 def get_setting(key, default_value=None):
     """Гирифтани танзимот аз база"""
-    conn = sqlite3.connect(DB_PATH, timeout=20)
+    conn = get_db_connection()
     cur = conn.cursor()
-    cur.execute("SELECT value FROM settings WHERE key = ?", (key,))
+    cur.execute("SELECT value FROM settings WHERE key = %s", (key,))
     result = cur.fetchone()
     conn.close()
     return result[0] if result else default_value
 
 def set_setting(key, value):
     """Захира кардани танзимот дар база"""
-    conn = sqlite3.connect(DB_PATH, timeout=20)
+    conn = get_db_connection()
     cur = conn.cursor()
-    cur.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, str(value)))
+    cur.execute("INSERT INTO settings (key, value) VALUES (%s, %s) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value", (key, str(value)))
     conn.commit()
     conn.close()
 
@@ -52,111 +56,15 @@ def get_next_payment_phone_for_rotation():
     set_setting("last_payment_phone_index", str(next_index))
     return PAYMENT_PHONE_NUMBERS[next_index]
 
-# Rohi mutlaq baroi muvofiqat bo bilol.py
-DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tfc_admin.db")
-DEFAULT_ADMIN_API_BASE = "https://tfc-admin-panel.onrender.com"
-ADMIN_API_BASE = os.environ.get("ADMIN_API_BASE", DEFAULT_ADMIN_API_BASE).rstrip("/")
-ADMIN_SYNC_API_KEY = os.environ.get("ADMIN_SYNC_API_KEY", "TFC_SECRET_SECURE_KEY_2026")
-REMOTE_CACHE = {}
-
-def _is_local_request() -> bool:
-    host = (request.host.split(":")[0] if request else "").lower()
-    return host in ("127.0.0.1", "localhost", "::1")
-
-def _use_remote_admin_api() -> bool:
-    forced = os.environ.get("FORCE_REMOTE_ADMIN_API", "").lower()
-    if forced in ("1", "true", "yes"):
-        return True
-    if forced in ("0", "false", "no"):
-        return False
-    return not _is_local_request()
-
-def _admin_api_base_for_template() -> str:
-    return ADMIN_API_BASE if _use_remote_admin_api() else ""
-
-def _remote_json(path, timeout=1.5, ttl=30):
-    if not _use_remote_admin_api() or not ADMIN_API_BASE:
-        return None
-    cache_key = path
-    now = datetime.now().timestamp()
-    cached = REMOTE_CACHE.get(cache_key)
-    if cached and now - cached["time"] < ttl:
-        return cached["data"]
-    url = f"{ADMIN_API_BASE}{path}"
-    try:
-        with urllib.request.urlopen(url, timeout=timeout) as resp:
-            if resp.status >= 400:
-                return None
-            data = json.loads(resp.read().decode("utf-8"))
-            REMOTE_CACHE[cache_key] = {"time": now, "data": data}
-            return data
-    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, OSError) as e:
-        print(f"Remote admin API fallback for {path}: {e}")
-        if cached:
-            return cached["data"]
-        return None
-
-def _post_admin_sync(payload, timeout=4):
-    if not _use_remote_admin_api() or not ADMIN_API_BASE:
-        return False
-    body = json.dumps(payload).encode("utf-8")
-    req = urllib.request.Request(
-        f"{ADMIN_API_BASE}/api/external/sync",
-        data=body,
-        headers={
-            "Content-Type": "application/json",
-            "X-API-KEY": ADMIN_SYNC_API_KEY,
-        },
-        method="POST",
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            return 200 <= resp.status < 300
-    except (urllib.error.URLError, TimeoutError, OSError) as e:
-        print(f"Remote admin sync failed: {e}")
-        return False
-
-def _admin_media_url(filename):
-    if not filename:
-        return ""
-    value = str(filename)
-    if value.startswith(("http://", "https://", "/static/")):
-        return value
-    return f"{ADMIN_API_BASE}/static/images/{urllib.parse.quote(value)}"
-
-def media_src(filename):
-    if not filename:
-        return ""
-    value = str(filename)
-    if value.startswith(("http://", "https://", "/static/")):
-        return value
-    return url_for("static", filename="images/" + value)
-
-def prefer_optimized_image(filename):
-    if not filename:
-        return filename
-    stem, ext = os.path.splitext(str(filename))
-    if ext.lower() in (".jpg", ".jpeg", ".png"):
-        webp_name = f"{stem}.webp"
-        if os.path.exists(os.path.join(UPLOAD_FOLDER, webp_name)):
-            return webp_name
-    return filename
-
-@app.after_request
-def add_static_cache_headers(resp):
-    if request.path.startswith("/static/images/"):
-        resp.headers["Cache-Control"] = "public, max-age=604800, immutable"
-    return resp
-
 def init_db() -> None:
-    conn = sqlite3.connect(DB_PATH, timeout=20) # Ensure timeout is applied here
+    conn = get_db_connection()
     cur = conn.cursor()
     
     # 1. Аввал ҷадвалҳоро месозем
     cur.execute(
         """
         CREATE TABLE IF NOT EXISTS orders (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id SERIAL PRIMARY KEY,
             customer TEXT NOT NULL,
             customer_id TEXT NOT NULL DEFAULT '',
             food TEXT NOT NULL,
@@ -169,42 +77,37 @@ def init_db() -> None:
             dostavka INTEGER NOT NULL DEFAULT 0,
             out_of_stock INTEGER NOT NULL DEFAULT 0,
             estimated_time INTEGER DEFAULT 0,
-            created TEXT NOT NULL
+            created TEXT NOT NULL,
+            delivery_latitude TEXT DEFAULT '',
+            delivery_longitude TEXT DEFAULT '',
+            delivery_address TEXT DEFAULT '',
+            refund REAL DEFAULT 0,
+            payment_method TEXT DEFAULT 'online'
         )
         """
     )
-    cur.execute("CREATE TABLE IF NOT EXISTS reviews (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, text TEXT NOT NULL, stars INTEGER NOT NULL, image_url TEXT, created TEXT NOT NULL)")
-    cur.execute("CREATE TABLE IF NOT EXISTS foods (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE, price TEXT NOT NULL, category TEXT NOT NULL, image_url TEXT NOT NULL DEFAULT '', description TEXT NOT NULL DEFAULT '', created TEXT NOT NULL)")
-    cur.execute("CREATE TABLE IF NOT EXISTS push_subscriptions (id INTEGER PRIMARY KEY AUTOINCREMENT, customer_id TEXT UNIQUE, subscription_json TEXT)")
-    cur.execute("CREATE TABLE IF NOT EXISTS aktsii (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL, price TEXT NOT NULL DEFAULT '', description TEXT, image_url TEXT, created TEXT NOT NULL)")
-    cur.execute("PRAGMA table_info(aktsii)")
-    a_cols = [r[1] for r in cur.fetchall()]
-    if "price" not in a_cols:
-        cur.execute("ALTER TABLE aktsii ADD COLUMN price TEXT NOT NULL DEFAULT ''")
+    cur.execute("CREATE TABLE IF NOT EXISTS reviews (id SERIAL PRIMARY KEY, name TEXT NOT NULL, text TEXT NOT NULL, stars INTEGER NOT NULL, image_url TEXT, created TEXT NOT NULL)")
+    cur.execute("CREATE TABLE IF NOT EXISTS foods (id SERIAL PRIMARY KEY, name TEXT NOT NULL UNIQUE, price TEXT NOT NULL, category TEXT NOT NULL, subcategory TEXT NOT NULL DEFAULT '', image_url TEXT NOT NULL DEFAULT '', description TEXT NOT NULL DEFAULT '', created TEXT NOT NULL)")
+    cur.execute("CREATE TABLE IF NOT EXISTS push_subscriptions (id SERIAL PRIMARY KEY, customer_id TEXT UNIQUE, subscription_json TEXT)")
+    cur.execute("CREATE TABLE IF NOT EXISTS aktsii (id SERIAL PRIMARY KEY, title TEXT NOT NULL, price TEXT NOT NULL DEFAULT '', description TEXT DEFAULT '', image_url TEXT, created TEXT NOT NULL)")
+    
+    cur.execute("CREATE TABLE IF NOT EXISTS customers (id SERIAL PRIMARY KEY, full_name TEXT NOT NULL, customer_id TEXT UNIQUE NOT NULL, created TEXT NOT NULL)")
 
-    cur.execute("CREATE TABLE IF NOT EXISTS customers (id INTEGER PRIMARY KEY AUTOINCREMENT, full_name TEXT NOT NULL, customer_id TEXT UNIQUE NOT NULL, created TEXT NOT NULL)")
-
-    # Ҷадвали махсус барои нигоҳдории доимии даромад (History)
     cur.execute(
         """
         CREATE TABLE IF NOT EXISTS revenue_history (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id SERIAL PRIMARY KEY,
             amount REAL NOT NULL,
             day TEXT NOT NULL,
             customer_id TEXT DEFAULT ''
         )
         """
     )
-    cur.execute("PRAGMA table_info(revenue_history)")
-    rev_cols = [r[1] for r in cur.fetchall()]
-    if "customer_id" not in rev_cols:
-        cur.execute("ALTER TABLE revenue_history ADD COLUMN customer_id TEXT DEFAULT ''")
 
-    # Ҷадвали таърихи пурраи заказҳо (Архив)
     cur.execute(
         """
         CREATE TABLE IF NOT EXISTS full_order_history (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id SERIAL PRIMARY KEY,
             customer TEXT NOT NULL,
             customer_id TEXT NOT NULL,
             food TEXT NOT NULL,
@@ -212,54 +115,18 @@ def init_db() -> None:
             phone TEXT NOT NULL,
             delivery_type TEXT NOT NULL,
             tip TEXT NOT NULL DEFAULT '',
-            created TEXT NOT NULL
+            created TEXT NOT NULL,
+            payment_method TEXT DEFAULT 'online'
         )
         """
     )
 
-    # 2. Баъд сутунҳоро тафтиш ва илова мекунем
-    cur.execute("PRAGMA table_info(orders)")
-    cols = [r[1] for r in cur.fetchall()]
-    if "customer_id" not in cols: cur.execute("ALTER TABLE orders ADD COLUMN customer_id TEXT NOT NULL DEFAULT ''")
-    if "qabyl" not in cols: cur.execute("ALTER TABLE orders ADD COLUMN qabyl INTEGER NOT NULL DEFAULT 0")
-    if "omoda" not in cols: cur.execute("ALTER TABLE orders ADD COLUMN omoda INTEGER NOT NULL DEFAULT 0")
-    if "phone" not in cols:
-        cur.execute("ALTER TABLE orders ADD COLUMN phone TEXT NOT NULL DEFAULT ''")
-    if "delivery_type" not in cols:
-        cur.execute("ALTER TABLE orders ADD COLUMN delivery_type TEXT NOT NULL DEFAULT ''")
-    if "dostavka" not in cols:
-        cur.execute("ALTER TABLE orders ADD COLUMN dostavka INTEGER NOT NULL DEFAULT 0")
-    if "out_of_stock" not in cols: cur.execute("ALTER TABLE orders ADD COLUMN out_of_stock INTEGER NOT NULL DEFAULT 0")
-    if "delivery_latitude" not in cols: cur.execute("ALTER TABLE orders ADD COLUMN delivery_latitude TEXT DEFAULT ''")
-    if "delivery_longitude" not in cols: cur.execute("ALTER TABLE orders ADD COLUMN delivery_longitude TEXT DEFAULT ''")
-    if "delivery_address" not in cols: cur.execute("ALTER TABLE orders ADD COLUMN delivery_address TEXT DEFAULT ''")
-    if "tip" not in cols: cur.execute("ALTER TABLE orders ADD COLUMN tip TEXT NOT NULL DEFAULT ''")
-    if "refund" not in cols: cur.execute("ALTER TABLE orders ADD COLUMN refund REAL DEFAULT 0")
-    if "estimated_time" not in cols: cur.execute("ALTER TABLE orders ADD COLUMN estimated_time INTEGER DEFAULT 0")
-    if "payment_method" not in cols:
-        cur.execute("ALTER TABLE orders ADD COLUMN payment_method TEXT DEFAULT 'online'")
-
     # Ҷадвал барои танзимоти динамикӣ
     cur.execute("CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)")
 
-    cur.execute("PRAGMA table_info(foods)")
-    f_cols = [r[1] for r in cur.fetchall()]
-    if "description" not in f_cols: cur.execute("ALTER TABLE foods ADD COLUMN description TEXT NOT NULL DEFAULT ''")
-    if "subcategory" not in f_cols:
-        cur.execute("ALTER TABLE foods ADD COLUMN subcategory TEXT NOT NULL DEFAULT ''")
-    
-    cur.execute("PRAGMA table_info(reviews)")
-    r_cols = [r[1] for r in cur.fetchall()]
-    if "image_url" not in r_cols: cur.execute("ALTER TABLE reviews ADD COLUMN image_url TEXT")
-
-    cur.execute("PRAGMA table_info(full_order_history)")
-    foh_cols = [r[1] for r in cur.fetchall()]
-    if "tip" not in foh_cols: cur.execute("ALTER TABLE full_order_history ADD COLUMN tip TEXT NOT NULL DEFAULT ''")
-    if "payment_method" not in foh_cols:
-        cur.execute("ALTER TABLE full_order_history ADD COLUMN payment_method TEXT DEFAULT 'online'")
-
-    # 3. Илова кардани додаҳои намунавӣ (Sync with bilol.py)
+    # 3. Илова кардани додаҳои намунавӣ
     sample_foods = [
+        # ... (sample foods list remains the same)
         # ЛЕТНЕЕ МЕНЮ
         ("СМУЗИ БАНАН + КИВИ", "26", "Летнее меню", "d1.png", "Смузи", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
         ("СМУЗИ БАНАН + МАЛИНА", "26", "Летнее меню", "d3.png", "Смузи", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
@@ -426,21 +293,19 @@ def init_db() -> None:
         ("БАСКЕТ", "130", "Фастфуд", "36.png", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
     ]
 
-    # Танҳо агар ҷадвали хӯрокҳо холӣ бошад, маълумоти намунавиро илова мекунем
-    cur.execute("SELECT COUNT(*) FROM foods")
-    if cur.fetchone()[0] == 0:
-        for f in sample_foods:
-            name, price, cat, img = f[0], f[1], f[2], prefer_optimized_image(f[3])
-            # Агар дарозии элемент 6 бошад, пас индекси 4 subcategory аст
-            sub = f[4] if len(f) == 6 else ""
-            created = f[-1]
-            
-            cur.execute("""
-                INSERT OR IGNORE INTO foods (name, price, category, subcategory, image_url, created)
-                VALUES (?, ?, ?, ?, ?, ?)
-            """, (name, price, cat, sub, img, created))
+    # Тафтиши мавҷудияти хӯрокҳо ва ворид кардани онҳо бо сутуни subcategory
+    for f in sample_foods:
+        name, price, cat, img = f[0], f[1], f[2], f[3]
+        sub = f[4] if len(f) == 6 else ""
+        created = f[-1]
+        
+        cur.execute("""
+            INSERT INTO foods (name, price, category, subcategory, image_url, created)
+            VALUES (%s, %s, %s, %s, %s, %s)
+            ON CONFLICT (name) DO NOTHING
+        """, (name, price, cat, sub, img, created))
 
-    # Тоза кардани расмҳои гумшуда барои пешгирӣ аз хатогии 404
+    # Тоза кардани расмҳои гумшуда
     cur.execute("UPDATE foods SET image_url = '' WHERE image_url IN ('d9.png', 'd10.png', 'd11.png')")
 
     conn.commit()
@@ -562,7 +427,7 @@ FOOD_DETAIL_TEMPLATE = r"""
                         Ваш браузер не поддерживает видео.
                     </video>
                 {% elif food.image_path %}
-                    <img src="{{ food.image_path }}" alt="{{ food.name }}" class="w-full h-full object-contain mx-auto p-2" decoding="async" fetchpriority="high">
+                    <img src="{{ food.image_path }}" alt="{{ food.name }}" class="w-full h-full object-contain mx-auto p-2">
                 {% else %}
                     <div class="w-full h-full bg-gradient-to-br from-red-600 to-red-900 flex items-center justify-center">
                         <i class="fas fa-utensils text-white text-6xl opacity-30"></i>
@@ -1815,7 +1680,7 @@ HTML_TEMPLATE = r"""
                 </button>
             </div>
             <div class="px-6 py-4 space-y-4 max-h-[75vh] overflow-y-auto">
-                <img id="info-food-image" src="" alt="" class="w-full max-h-64 object-contain rounded-2xl border border-white/10 bg-black/10 mx-auto" style="height: auto;" loading="lazy" decoding="async">
+                <img id="info-food-image" src="" alt="" class="w-full max-h-64 object-contain rounded-2xl border border-white/10 bg-black/10 mx-auto" style="height: auto;">
                 <div class="p-3 rounded-2xl bg-white/5 border border-white/10">
                     <div id="info-food-description" class="text-xs leading-relaxed whitespace-pre-wrap" style="color: var(--modal-text-muted);"></div>
                 </div>
@@ -2006,7 +1871,7 @@ HTML_TEMPLATE = r"""
             <div id="filtered-product-grid" class="grid product-grid gap-8">
                 {% for food in categories.get('Меню', []) %}
                 <div class="product-card food-card" data-food-id="{{ food.id }}" data-name="{{ food.name }}" data-subcategory="{{ food.subcategory|default('') }}" data-description="{{ food.description|e }}">
-                    <img src="{{ media_src(food.image_url) if food.image_url else '' }}" alt="{{ food.name }}" loading="lazy" decoding="async">
+                    <img src="{{ url_for('static', filename='images/' + food.image_url) if food.image_url else '' }}" alt="{{ food.name }}">
                     <div class="food-description hidden">{{ food.description }}</div>
                     <div class="food-info-sign" title="Полная информация о блюде">...</div>
                     <div class="product-info">
@@ -2059,7 +1924,7 @@ HTML_TEMPLATE = r"""
             <div id="fastfood-filtered-product-grid" class="grid product-grid gap-8">
                 {% for food in categories.get('Фастфуд', []) %}
                 <div class="product-card food-card" data-food-id="{{ food.id }}" data-name="{{ food.name }}" data-subcategory="{{ food.subcategory|default('') }}" data-description="{{ food.description|e }}">
-                    <img src="{{ media_src(food.image_url) if food.image_url else '' }}" alt="{{ food.name }}" loading="lazy" decoding="async">
+                    <img src="{{ url_for('static', filename='images/' + food.image_url) if food.image_url else '' }}" alt="{{ food.name }}">
                     <div class="food-description hidden">{{ food.description }}</div>
                     <div class="food-info-sign" title="Полная информация о блюде">...</div>
                     <div class="product-info">
@@ -2100,7 +1965,7 @@ HTML_TEMPLATE = r"""
             <div id="sushi-filtered-product-grid" class="grid product-grid gap-8">
                 {% for food in categories.get('Суши', []) %}
                 <div class="product-card food-card" data-food-id="{{ food.id }}" data-name="{{ food.name }}" data-subcategory="{{ food.subcategory|default('') }}" data-description="{{ food.description|e }}">
-                    <img src="{{ media_src(food.image_url) if food.image_url else '' }}" alt="{{ food.name }}" loading="lazy" decoding="async">
+                    <img src="{{ url_for('static', filename='images/' + food.image_url) if food.image_url else '' }}" alt="{{ food.name }}">
                     <div class="food-description hidden">{{ food.description }}</div>
                     <div class="food-info-sign" title="Полная информация о блюде">...</div>
                     <div class="product-info">
@@ -2141,7 +2006,7 @@ HTML_TEMPLATE = r"""
             <div id="pizza-filtered-product-grid" class="grid product-grid gap-8">
                 {% for food in categories.get('Пицца', []) %}
                 <div class="product-card food-card" data-food-id="{{ food.id }}" data-name="{{ food.name }}" data-subcategory="{{ food.subcategory|default('') }}" data-description="{{ food.description|e }}">
-                    <img src="{{ media_src(food.image_url) if food.image_url else '' }}" alt="{{ food.name }}" loading="lazy" decoding="async">
+                    <img src="{{ url_for('static', filename='images/' + food.image_url) if food.image_url else '' }}" alt="{{ food.name }}">
                     <div class="food-description hidden">{{ food.description }}</div>
                     <div class="food-info-sign" title="Полная информация о блюде">...</div>
                     <div class="product-info">
@@ -2190,7 +2055,7 @@ HTML_TEMPLATE = r"""
             <div id="summer-menu-filtered-product-grid" class="grid product-grid gap-8">
                 {% for food in categories.get('Летнее меню', []) %}
                 <div class="product-card food-card" data-food-id="{{ food.id }}" data-name="{{ food.name }}" data-subcategory="{{ food.subcategory|default('') }}" data-description="{{ food.description|e }}">
-                    <img src="{{ media_src(food.image_url) if food.image_url else '' }}" alt="{{ food.name }}" loading="lazy" decoding="async">
+                    <img src="{{ url_for('static', filename='images/' + food.image_url) if food.image_url else '' }}" alt="{{ food.name }}">
                     <div class="food-description hidden">{{ food.description }}</div>
                     <div class="food-info-sign" title="Полная информация о блюде">...</div>
                     <div class="product-info">
@@ -2216,7 +2081,7 @@ HTML_TEMPLATE = r"""
             <div class="grid product-grid gap-8">
                 {% for food in categories.get('Комбо', []) %}
                 <div class="product-card food-card" data-food-id="{{ food.id }}" data-name="{{ food.name }}" data-subcategory="{{ food.subcategory|default('') }}" data-description="{{ food.description|e }}">
-                    <img src="{{ media_src(food.image_url) if food.image_url else '' }}" alt="{{ food.name }}" loading="lazy" decoding="async">
+                    <img src="{{ url_for('static', filename='images/' + food.image_url) if food.image_url else '' }}" alt="{{ food.name }}">
                     <div class="food-description hidden">{{ food.description }}</div>
                     <div class="food-info-sign" title="Полная информация о блюде">...</div>
                     <div class="product-info">
@@ -2267,7 +2132,7 @@ HTML_TEMPLATE = r"""
                 <div class="product-card text-review-card flex flex-col justify-between p-4" style="background: var(--card-bg); border: 1px dashed var(--notif-item-border-left);">
                     <div class="flex flex-col">
                         {% if rev.image_url %}
-                        <img src="{{ media_src(rev.image_url) }}" class="w-full aspect-square object-cover rounded-xl mb-3 shadow-lg" loading="lazy" decoding="async">
+                        <img src="{{ url_for('static', filename='images/' + rev.image_url) }}" class="w-full aspect-square object-cover rounded-xl mb-3 shadow-lg">
                         {% endif %}
                         <div class="flex justify-between items-start mb-2">
                             <h5 class="font-bold text-[10px] uppercase" style="color: var(--tfc-gold);">{{ rev.name }}</h5>
@@ -2291,7 +2156,7 @@ HTML_TEMPLATE = r"""
                 <!-- 2. Отзывҳои суратдор -->
                 {% for food in [] %}
                 <div class="product-card">
-                    <img src="{{ media_src(food.image_url) if food.image_url else '' }}" alt="{{ food.name }}" loading="lazy" decoding="async">
+                    <img src="{{ url_for('static', filename='images/' + food.image_url) if food.image_url else '' }}" alt="{{ food.name }}">
                     <div class="product-info">
                         <h3>{{ food.name }}</h3>
                         <div class="price-tag">{{ food.price }}с</div>
@@ -2321,7 +2186,7 @@ HTML_TEMPLATE = r"""
                         {% if item.is_video %}
                         <div class="relative overflow-hidden bg-black cursor-pointer" onclick="togglePlay('promo-media-{{ loop.index0 }}', this)">
                             <video id="promo-media-{{ loop.index0 }}" class="w-full h-auto max-h-[75vh] block" preload="metadata" playsinline loop>
-                                <source src="{{ media_src(item.image_url) }}" type="video/mp4">
+                                <source src="{{ url_for('static', filename='images/' + item.image_url) }}" type="video/mp4">
                                 Your browser does not support the video tag.
                             </video>
                             <div class="play-overlay absolute inset-0 flex items-center justify-center bg-black/30 transition-opacity duration-300">
@@ -2331,7 +2196,7 @@ HTML_TEMPLATE = r"""
                             </div>
                         </div>
                         {% else %}
-                        <img src="{{ media_src(item.image_url) }}" alt="{{ item.title }}" class="w-full aspect-video object-cover block" loading="lazy" decoding="async">
+                        <img src="{{ url_for('static', filename='images/' + item.image_url) }}" alt="{{ item.title }}" class="w-full aspect-video object-cover block">
                         {% endif %}
                     {% endif %}
                     <div class="product-info p-6">
@@ -2436,14 +2301,14 @@ HTML_TEMPLATE = r"""
                         {% if food.is_video %}
                         <div class="relative overflow-hidden bg-black cursor-pointer" onclick="togglePlay('v-media-{{ loop.index0 }}', this)">
                             <video id="v-media-{{ loop.index0 }}" class="w-full h-auto max-h-[60vh] block" preload="metadata" playsinline loop>
-                                <source src="{{ media_src(food.image_url) }}">
+                                <source src="{{ url_for('static', filename='images/' + food.image_url) }}">
                             </video>
                             <div class="play-overlay absolute inset-0 flex items-center justify-center bg-black/30 transition-opacity duration-300">
                                 <div class="w-12 h-12 rounded-full bg-red-600 flex items-center justify-center text-white text-xl shadow-[0_0_15px_rgba(228,0,43,0.5)]"><i class="fa-solid fa-play"></i></div>
                             </div>
                         </div>
                         {% else %}
-                        <img src="{{ media_src(food.image_url) }}" alt="{{ food.name }}" class="h-44 w-full object-cover" loading="lazy" decoding="async">
+                        <img src="{{ url_for('static', filename='images/' + food.image_url) }}" alt="{{ food.name }}" class="h-44 w-full object-cover">
                         {% endif %}
                     {% endif %}
                     <div class="product-info !pb-6 px-5 !text-left">
@@ -2511,6 +2376,10 @@ HTML_TEMPLATE = r"""
                 try {
                     await requestFs.call(docEl);
                     cleanFullScreenEvents();
+                    // Қулф кардани экран ба ҳолати албомӣ барои намуди беҳтар
+                    if (screen.orientation && screen.orientation.lock) {
+                        await screen.orientation.lock('landscape').catch(() => {});
+                    }
                 } catch (err) {
                     // Игнори хатогӣ, агар браузер иҷозат надиҳад
                 }
@@ -2812,45 +2681,7 @@ HTML_TEMPLATE = r"""
                 updateTopControlsByScroll();
                 startCustomerStatusPolling();
                 updateNotifBadge(); // Навсозии баҷ ҳангоми ворид шудан
-                
-                // Setup Push Notifications
-                setupPushNotifications(profile.id);
             }, 0);
-        }
-
-        async function setupPushNotifications(customerId) {
-            if (!('serviceWorker' in navigator) || !('PushManager' in window)) return;
-            
-            try {
-                const registration = await navigator.serviceWorker.register('/sw.js');
-                const permission = await Notification.requestPermission();
-                if (permission !== 'granted') return;
-
-                let subscription = await registration.pushManager.getSubscription();
-                if (!subscription) {
-                    subscription = await registration.pushManager.subscribe({
-                        userVisibleOnly: true,
-                        applicationServerKey: urlBase64ToUint8Array("{{ vapid_public_key }}")
-                    });
-                }
-
-                await fetch('/api/push/subscribe', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ customer_id: customerId, subscription: subscription })
-                });
-            } catch (e) { console.error("Push Error:", e); }
-        }
-
-        function urlBase64ToUint8Array(base64String) {
-            const padding = '='.repeat((4 - base64String.length % 4) % 4);
-            const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
-            const rawData = window.atob(base64);
-            const outputArray = new Uint8Array(rawData.length);
-            for (let i = 0; i < rawData.length; ++i) {
-                outputArray[i] = rawData.charCodeAt(i);
-            }
-            return outputArray;
         }
     </script>
     <script>
@@ -3557,12 +3388,7 @@ HTML_TEMPLATE = r"""
         window.addEventListener("scroll", updateTopControlsByScroll);
 
         function adminApiBase() {
-            const configured = "{{ admin_api_base }}";
-            const localHosts = ["127.0.0.1", "localhost"];
-            if (localHosts.includes(window.location.hostname)) {
-                return window.location.protocol + "//" + window.location.hostname + ":5001";
-            }
-            return configured;
+            return "";
         }
 
         let selectedOrderPayload = null;
@@ -4352,6 +4178,9 @@ HTML_TEMPLATE = r"""
             const vid = document.getElementById(vidId);
             if (vid.requestFullscreen) {
                 vid.requestFullscreen().then(() => {
+                    if (screen.orientation && screen.orientation.lock) {
+                        screen.orientation.lock('landscape').catch(e => console.log("Orientation lock not supported"));
+                    }
                 });
             } else if (vid.webkitRequestFullscreen) {
                 vid.webkitRequestFullscreen(); // Барои iOS (Safari)
@@ -4421,15 +4250,15 @@ def api_reviews_add():
             image_url = filename
 
     created = datetime.now().strftime("%d.%m.%Y %H:%M")
-    conn = sqlite3.connect(DB_PATH); cur = conn.cursor()
-    cur.execute("INSERT INTO reviews (name, text, stars, image_url, created) VALUES (?, ?, ?, ?, ?)", (name, text, stars, image_url, created))
+    conn = get_db_connection(); cur = conn.cursor()
+    cur.execute("INSERT INTO reviews (name, text, stars, image_url, created) VALUES (%s, %s, %s, %s, %s)", (name, text, stars, image_url, created))
     conn.commit(); conn.close()
     return jsonify({"ok": True})
 
 @app.route("/api/reviews/delete/<int:review_id>", methods=["POST"])
 def api_reviews_delete(review_id):
-    conn = sqlite3.connect(DB_PATH); cur = conn.cursor()
-    cur.execute("DELETE FROM reviews WHERE id = ?", (review_id,))
+    conn = get_db_connection(); cur = conn.cursor()
+    cur.execute("DELETE FROM reviews WHERE id = %s", (review_id,))
     conn.commit(); conn.close()
     return jsonify({"ok": True})
 
@@ -4438,14 +4267,9 @@ def api_push_subscribe():
     data = request.get_json()
     customer_id = data.get("customer_id")
     sub_json = json.dumps(data.get("subscription"))
-    conn = sqlite3.connect(DB_PATH); cur = conn.cursor()
-    cur.execute("INSERT OR REPLACE INTO push_subscriptions (customer_id, subscription_json) VALUES (?, ?)", (customer_id, sub_json))
+    conn = get_db_connection(); cur = conn.cursor()
+    cur.execute("INSERT INTO push_subscriptions (customer_id, subscription_json) VALUES (%s, %s) ON CONFLICT (customer_id) DO UPDATE SET subscription_json = EXCLUDED.subscription_json", (customer_id, sub_json))
     conn.commit(); conn.close()
-    _post_admin_sync({
-        "sync_type": "push_subscription",
-        "customer_id": customer_id,
-        "subscription_json": sub_json,
-    })
     return jsonify({"ok": True})
 
 @app.route("/api/customers/register", methods=["POST"])
@@ -4458,17 +4282,12 @@ def api_customers_register():
     
     created = datetime.now().strftime("%d.%m.%Y %H:%M")
     try:
-        conn = sqlite3.connect(DB_PATH)
+        conn = get_db_connection()
         cur = conn.cursor()
-        cur.execute("INSERT OR IGNORE INTO customers (full_name, customer_id, created) VALUES (?, ?, ?)", 
+        cur.execute("INSERT INTO customers (full_name, customer_id, created) VALUES (%s, %s, %s) ON CONFLICT (customer_id) DO NOTHING", 
                     (full_name, customer_id, created))
         conn.commit()
         conn.close()
-        _post_admin_sync({
-            "sync_type": "customer",
-            "full_name": full_name,
-            "customer_id": customer_id,
-        })
         return jsonify({"ok": True})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
@@ -4537,26 +4356,23 @@ def api_orders_new():
     if not tip:
         tip = "Наличными 💵" if payment_method == "cash" else f"Картой 💳 ({payment_phone})"
     created = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    conn = sqlite3.connect(DB_PATH, timeout=20)
-    cur = conn.cursor() # Ensure timeout is applied here
-    # Insert bo hamai maydonho baroi durust namoyish shudan dar admin
+    conn = get_db_connection()
+    cur = conn.cursor()
     cur.execute("""
         INSERT INTO orders (customer, customer_id, food, price, phone, delivery_type, tip, delivery_latitude, delivery_longitude, delivery_address, payment_method, qabyl, omoda, dostavka, created)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 0, ?)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 0, 0, 0, %s)
     """, (customer, customer_id, food, price, phone, delivery_type, tip, delivery_latitude, delivery_longitude, delivery_address, payment_method, created))
     order_id = cur.lastrowid
     
-    # Сабти заказ дар таърихи доимӣ (Архив), то пас аз нест кардан боқӣ монад
     cur.execute(
-        "INSERT INTO full_order_history (customer, customer_id, food, price, phone, delivery_type, tip, payment_method, created) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO full_order_history (customer, customer_id, food, price, phone, delivery_type, tip, payment_method, created) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
         (customer, customer_id, food, price, phone, delivery_type, tip, payment_method, created)
     )
 
-    # Сабти маблағ дар таърихи доимӣ
     try:
         p_clean = "".join(c for c in str(price).replace(',', '.') if c.isdigit() or c == '.')
         amount = float(p_clean) if p_clean else 0.0
-        cur.execute("INSERT INTO revenue_history (amount, day, customer_id) VALUES (?, ?, ?)", (amount, datetime.now().strftime("%Y-%m-%d"), customer_id))
+        cur.execute("INSERT INTO revenue_history (amount, day, customer_id) VALUES (%s, %s, %s)", (amount, datetime.now().strftime("%Y-%m-%d"), customer_id))
     except: pass
 
     conn.commit()
@@ -4572,15 +4388,15 @@ def api_get_next_phone():
 def api_orders_since():
     try:
         last_id = int(request.args.get("last_id", 0))
-        conn = sqlite3.connect(DB_PATH, timeout=20); cur = conn.cursor()
-        cur.execute("SELECT id, customer, customer_id, food, price, qabyl, omoda, created, phone, delivery_type, delivery_latitude, delivery_longitude, delivery_address, estimated_time, tip FROM orders WHERE id > ?", (last_id,))
+        conn = get_db_connection(); cur = conn.cursor()
+        cur.execute("SELECT id, customer, customer_id, food, price, qabyl, omoda, created, phone, delivery_type, delivery_latitude, delivery_longitude, delivery_address, estimated_time, tip FROM orders WHERE id > %s", (last_id,))
         rows = cur.fetchall(); conn.close()
         return jsonify({"ok": True, "orders": [{"id": r[0], "customer": r[1], "customer_id": r[2], "food": r[3], "price": r[4], "qabyl": bool(r[5]), "omoda": bool(r[6]), "created": r[7], "phone": r[8], "delivery_type": r[9], "delivery_latitude": r[10] if len(r) > 10 else "", "delivery_longitude": r[11] if len(r) > 11 else "", "delivery_address": r[12] if len(r) > 12 else "", "estimated_time": r[13], "tip": r[14] if len(r) > 14 else ""} for r in rows]})
     except ValueError:
         return jsonify({"ok": False, "error": "Invalid last_id parameter"}), 400
-    except sqlite3.Error as e:
+    except Exception as e:
         print(f"Database error in api_orders_since: {e}")
-        return jsonify({"ok": False, "error": "Database error"}), 500
+        return jsonify({"ok": False, "error": str(e)}), 500
 
 @app.route("/api/orders/update-status", methods=["POST"])
 def api_orders_update_status():
@@ -4588,25 +4404,20 @@ def api_orders_update_status():
     order_id, field = data.get("id"), data.get("field")
     db_value = int(data.get("value", 0))
     estimated_time = data.get("estimated_time")
-    conn = sqlite3.connect(DB_PATH, timeout=20); cur = conn.cursor()
+    conn = get_db_connection(); cur = conn.cursor()
     if field == 'qabyl' and estimated_time is not None:
-        cur.execute(f"UPDATE orders SET {field} = ?, estimated_time = ? WHERE id = ?", (db_value, estimated_time, order_id))
+        cur.execute(f"UPDATE orders SET {field} = %s, estimated_time = %s WHERE id = %s", (db_value, estimated_time, order_id))
     else:
-        cur.execute(f"UPDATE orders SET {field} = ? WHERE id = ?", (db_value, order_id))
+        cur.execute(f"UPDATE orders SET {field} = %s WHERE id = %s", (db_value, order_id))
     conn.commit(); conn.close()
-
-    # Push Notification Logic
-    if db_value > 0:
-        # (Инҷо коди фиристодани Push-ро мисли bilol.py илова кардан мумкин аст)
-        pass
     return jsonify({"ok": True})
 
 @app.route("/api/orders/customer-status", methods=["GET"])
 def api_orders_customer_status():
     customer_id = request.args.get("customer_id", "")
     try:
-        conn = sqlite3.connect(DB_PATH, timeout=20); cur = conn.cursor()
-        cur.execute("SELECT id, food, qabyl, omoda, phone, delivery_type, dostavka, out_of_stock, refund, estimated_time, price FROM orders WHERE customer_id = ? ORDER BY id DESC LIMIT 1", (customer_id,))
+        conn = get_db_connection(); cur = conn.cursor()
+        cur.execute("SELECT id, food, qabyl, omoda, phone, delivery_type, dostavka, out_of_stock, refund, estimated_time, price FROM orders WHERE customer_id = %s ORDER BY id DESC LIMIT 1", (customer_id,))
         r = cur.fetchone(); conn.close()
         orders = [{"id": r[0], "food": r[1], "qabyl": bool(r[2]), "omoda": bool(r[3]), "phone": r[4], "delivery_type": r[5], "dostavka": int(r[6]), "out_of_stock": bool(r[7]), "refund": r[8] if r[8] is not None else 0, "estimated_time": r[9] if len(r) > 9 else 0, "price": r[10] if len(r) > 10 else "0"}] if r else []
         return jsonify({"ok": True, "orders": orders})
@@ -4616,22 +4427,17 @@ def api_orders_customer_status():
 
 @app.route("/api/foods/list", methods=["GET"])
 def api_foods_list():
-    conn = sqlite3.connect(DB_PATH, timeout=20); cur = conn.cursor()
+    conn = get_db_connection(); cur = conn.cursor()
     cur.execute("SELECT id, name, price, category, image_url, description FROM foods"); rows = cur.fetchall(); conn.close()
     return jsonify({"ok": True, "foods": [{"id": r[0], "name": r[1], "price": r[2], "category": r[3], "image_url": r[4], "description": r[5]} for r in rows]})
 
 def get_orders():
     try:
-        remote = _remote_json("/api/orders/since?last_id=0", timeout=1, ttl=5)
-        if remote and remote.get("ok") and isinstance(remote.get("orders"), list):
-            orders = remote["orders"][-10:]
-            orders.reverse()
-        else:
-            with sqlite3.connect(DB_PATH) as conn:
-                conn.row_factory = sqlite3.Row
-                cur = conn.cursor()
-                cur.execute("SELECT food, price, qabyl, omoda FROM orders ORDER BY id DESC LIMIT 10")
-                orders = [dict(row) for row in cur.fetchall()]
+        conn = get_db_connection()
+        cur = conn.cursor(cursor_factory=extras.RealDictCursor)
+        cur.execute("SELECT food, price, qabyl, omoda FROM orders ORDER BY id DESC LIMIT 10")
+        orders = cur.fetchall()
+        conn.close()
         return orders
     except Exception as e:
         print(f"Database error: {e}")
@@ -4639,17 +4445,11 @@ def get_orders():
 
 def get_all_foods():
     try:
-        remote = _remote_json("/api/foods/list", timeout=1.5, ttl=60)
-        if remote and remote.get("ok") and isinstance(remote.get("foods"), list):
-            foods = remote["foods"]
-            for f in foods:
-                f["image_url"] = _admin_media_url(f.get("image_url", ""))
-        else:
-            with sqlite3.connect(DB_PATH) as conn:
-                conn.row_factory = sqlite3.Row
-                cur = conn.cursor()
-                cur.execute("SELECT id, name, price, category, subcategory, image_url, description FROM foods")
-                foods = [dict(row) for row in cur.fetchall()]
+        conn = get_db_connection()
+        cur = conn.cursor(cursor_factory=extras.RealDictCursor)
+        cur.execute("SELECT id, name, price, category, subcategory, image_url, description FROM foods")
+        foods = cur.fetchall()
+        conn.close()
         
         # Group by category and detect media type
         cat_map = {}
@@ -4663,26 +4463,21 @@ def get_all_foods():
 
 def get_all_reviews():
     try:
-        with sqlite3.connect(DB_PATH) as conn:
-            conn.row_factory = sqlite3.Row
-            cur = conn.cursor()
-            cur.execute("SELECT id, name, text, stars, image_url, created FROM reviews ORDER BY id DESC")
-            return [dict(row) for row in cur.fetchall()]
+        conn = get_db_connection()
+        cur = conn.cursor(cursor_factory=extras.RealDictCursor)
+        cur.execute("SELECT id, name, text, stars, image_url, created FROM reviews ORDER BY id DESC")
+        res = cur.fetchall()
+        conn.close()
+        return res
     except: return []
 
 def get_all_aktsii():
     try:
-        remote = _remote_json("/api/aktsii/list", timeout=1.5, ttl=60)
-        if remote and remote.get("ok") and isinstance(remote.get("aktsii"), list):
-            results = remote["aktsii"]
-            for r in results:
-                r["image_url"] = _admin_media_url(r.get("image_url", ""))
-        else:
-            with sqlite3.connect(DB_PATH) as conn:
-                conn.row_factory = sqlite3.Row
-                cur = conn.cursor()
-                cur.execute("SELECT title, price, description, image_url, created FROM aktsii ORDER BY id DESC")
-                results = [dict(row) for row in cur.fetchall()]
+        conn = get_db_connection()
+        cur = conn.cursor(cursor_factory=extras.RealDictCursor)
+        cur.execute("SELECT title, price, description, image_url, created FROM aktsii ORDER BY id DESC")
+        results = cur.fetchall()
+        conn.close()
         for r in results:
             r['is_video'] = bool(r.get('image_url') and r['image_url'].lower().endswith(('.mp4', '.webm', '.mov', '.ogg')))
         return results
@@ -4690,47 +4485,25 @@ def get_all_aktsii():
 
 @app.route('/')
 def home():
-    return render_template_string(
-        HTML_TEMPLATE,
-        orders=get_orders(),
-        categories=get_all_foods(),
-        text_reviews=get_all_reviews(),
-        aktsii=get_all_aktsii(),
-        vapid_public_key=VAPID_PUBLIC_KEY,
-        admin_api_base=_admin_api_base_for_template(),
-        media_src=media_src,
-    )
+    return render_template_string(HTML_TEMPLATE, orders=get_orders(), categories=get_all_foods(), text_reviews=get_all_reviews(), aktsii=get_all_aktsii())
 
 @app.route('/food/<int:food_id>')
 def food_detail(food_id):
     """Display detailed information for a single food item"""
     try:
-        food = None
-        remote = _remote_json("/api/foods/list", timeout=1.5, ttl=60)
-        if remote and remote.get("ok") and isinstance(remote.get("foods"), list):
-            food = next((f for f in remote["foods"] if int(f.get("id", -1)) == food_id), None)
-            if food:
-                food = dict(food)
-                food.setdefault("created", "")
-                food["image_url"] = _admin_media_url(food.get("image_url", ""))
-        if not food:
-            conn = sqlite3.connect(DB_PATH, timeout=20)
-            conn.row_factory = sqlite3.Row
-            cur = conn.cursor()
-            cur.execute("""
-                SELECT id, name, price, category, description, image_url, created
-                FROM foods WHERE id = ?
-            """, (food_id,))
-            food = cur.fetchone()
-            conn.close()
+        conn = get_db_connection()
+        cur = conn.cursor(cursor_factory=extras.RealDictCursor)
+        cur.execute("""
+            SELECT id, name, price, category, description, image_url, created
+            FROM foods WHERE id = %s
+        """, (food_id,))
+        food = cur.fetchone()
+        conn.close()
         
         if not food:
             return redirect('/')
         
-        food = dict(food)
-        food['image_path'] = media_src(food['image_url']) if food['image_url'] else ""
-        
-        # Check if image is a video
+        food['image_path'] = f"/static/images/{food['image_url']}" if food['image_url'] else ""
         food['is_video'] = bool(food['image_url'] and food['image_url'].lower().endswith(('.mp4', '.webm', '.mov', '.ogg')))
         
         return render_template_string(FOOD_DETAIL_TEMPLATE, food=food)
@@ -4759,6 +4532,4 @@ if __name__ == '__main__':
     print(f"1. Временно отключите Windows Firewall.")
     print(f"2. Установите тип сети Wi-Fi в Windows на 'Private'.")
     print(f"--------------c:/Users/Anis/Desktop/qwer/app.py----------------------------------------")
-    # Дар муҳити корӣ (Production) Gunicorn-ро истифода баред:
-    # gunicorn -w 4 -b 0.0.0.0:5000 app:app
-    app.run(debug=False, host="0.0.0.0", port=port)
+    app.run(debug=True, host="0.0.0.0", port=port)
