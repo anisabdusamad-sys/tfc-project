@@ -128,169 +128,169 @@ def init_db() -> None:
     sample_foods = [
         # ... (sample foods list remains the same)
         # ЛЕТНЕЕ МЕНЮ
-        ("СМУЗИ БАНАН + КИВИ", "26", "Летнее меню", "d1.png", "Смузи", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("СМУЗИ БАНАН + МАЛИНА", "26", "Летнее меню", "d3.png", "Смузи", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("ОКРОШКА (350МЛ)", "16", "Летнее меню", "d7.png", "Холодок", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("АЙРАН (500МЛ)", "6", "Летнее меню", "d8.png", "Холодок", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("МОХИТО LIME", "19", "Летнее меню", "e1.png", "Мохито", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("МОХИТО CLASSIC", "16", "Летнее меню", "e2.png", "Мохито", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("МОХИТО BLUE LAGOON", "19", "Летнее меню", "e6.png", "Мохито", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("МОХИТО KIWI", "19", "Летнее меню", "e8.png", "Мохито", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("СМУЗИ БАНАН + КИВИ", "26", "Летнее меню", "d1.webp", "Смузи", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("СМУЗИ БАНАН + МАЛИНА", "26", "Летнее меню", "d3.webp", "Смузи", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("ОКРОШКА (350МЛ)", "16", "Летнее меню", "d7.webp", "Холодок", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("АЙРАН (500МЛ)", "6", "Летнее меню", "d8.webp", "Холодок", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("МОХИТО LIME", "19", "Летнее меню", "e1.webp", "Мохито", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("МОХИТО CLASSIC", "16", "Летнее меню", "e2.webp", "Мохито", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("МОХИТО BLUE LAGOON", "19", "Летнее меню", "e6.webp", "Мохито", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("МОХИТО KIWI", "19", "Летнее меню", "e8.webp", "Мохито", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
 
         # МЕНЮ (ПАСТА, САЛАТҲО, ШӮРБОҲО ва ғ.)
-        ("ПАСТА БОЛОНЕЗА", "31", "Меню", "b1.png", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("ПАСТА ФИТУЧИНИ", "35", "Меню", "b2.png", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("ПАСТА ПЕНЕ", "32", "Меню", "b3.png", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("ПАСТА СОБА", "23", "Меню", "b4.png", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("ГНЁЗДА С ГОВЯДИНОЙ", "27", "Меню", "b5.png", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("САЛАТ ТАЙСКИЙ", "34", "Меню", "b6.png", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("САЛАТ TFC", "35", "Меню", "b7.png", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("ХРУСТЯЩИЙ БАКЛАЖАН", "17", "Меню", "b8.png", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("САЛАТ ЦЕЗАРЬ", "25", "Меню", "b9.png", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("САЛАТ ЗЕЛЁНАЯ ЛУЖАЙКА", "15", "Меню", "b10.png", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("ГРЕЧЕСКИЙ САЛАТ", "34", "Меню", "b11.png", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("СУП МЕРДЖИМЕК", "15", "Меню", "b12.png", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("БОРЩ", "25", "Меню", "b13.png", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("ГРИБНОЙ СУП", "26", "Меню", "b14.png", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("ЛАГМАН", "21", "Меню", "b15.png", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("СУП TFC", "28", "Меню", "b16.png", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("ЧАХОВ БИЛИ", "26", "Меню", "b17.png", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("БИФШ СТЕКС", "25/35", "Меню", "b18.png", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("КОТЛЕТ ПО-КИЕВСКИЙ", "28/38", "Меню", "b19.png", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("КАЗАН КАБОБ", "40", "Меню", "b21.jpg", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("ЖАРОВНЯ ТФС (БАРАНИНА/ГОВЯДИНА)", "50", "Меню", "b22.jpg", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("СТЕЙК ИЗ ФОРЕЛИ", "25", "Меню", "b23.jpg", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("ТАБАКА", "58", "Меню", "b24.jpg", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("КОРЕЙКА БАРАНИНА", "50", "Меню", "b25.jpg", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("СТЕЙК ИЗ ГОВЯДИНЫ", "50", "Меню", "b26.jpg", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("ЧИЗКЕЙК", "12", "Меню", "b27.jpg", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("РАФАЭЛЛО", "12", "Меню", "b28.jpg", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("НАПОЛЕОН", "10", "Меню", "b29.jpg", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("ТИРАМИСУ", "12", "Меню", "b30.jpg", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("ФРУКТОВАЯ НАРЕЗКА (Большая)", "75", "Меню", "b31.jpg", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("ФРУКТОВАЯ НАРЕЗКА (Средняя)", "50", "Меню", "b32.jpg", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("КЕШЬЮ", "45", "Меню", "b33.jpg", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("ФИСТАШКИ", "45", "Меню", "b34.jpg", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("ФИСТАШКИ", "45", "Меню", "b34.jpg", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("АМЕРИКАНО", "15", "Меню", "b35.jpg", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("КАПУЧИНO", "18", "Меню", "b36.jpg", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("ЛАТТЕ", "18", "Меню", "b37.jpg", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("ЭСПРЕССО", "12", "Меню", "b38.jpg", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("ЧАЙ (Зелёный / черный)", "5", "Меню", "b39.jpg", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("ПАСТА БОЛОНЕЗА", "31", "Меню", "b1.png", "", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("ПАСТА ФИТУЧИНИ", "35", "Меню", "b2.png", "", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("ПАСТА ПЕНЕ", "32", "Меню", "b3.png", "", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("ПАСТА СОБА", "23", "Меню", "b4.png", "", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("ГНЁЗДА С ГОВЯДИНОЙ", "27", "Меню", "b5.png", "", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("САЛАТ ТАЙСКИЙ", "34", "Меню", "b6.png", "", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("САЛАТ TFC", "35", "Меню", "b7.png", "", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("ХРУСТЯЩИЙ БАКЛАЖАН", "17", "Меню", "b8.png", "", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("САЛАТ ЦЕЗАРЬ", "25", "Меню", "b9.png", "", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("САЛАТ ЗЕЛЁНАЯ ЛУЖАЙКА", "15", "Меню", "b10.png", "", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("ГРЕЧЕСКИЙ САЛАТ", "34", "Меню", "b11.png", "", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("СУП МЕРДЖИМЕК", "15", "Меню", "b12.png", "", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("БОРЩ", "25", "Меню", "b13.png", "", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("ГРИБНОЙ СУП", "26", "Меню", "b14.png", "", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("ЛАГМАН", "21", "Меню", "b15.png", "", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("СУП TFC", "28", "Меню", "b16.png", "", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("ЧАХОВ БИЛИ", "26", "Меню", "b17.png", "", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("БИФШ СТЕКС", "25/35", "Меню", "b18.png", "", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("КОТЛЕТ ПО-КИЕВСКИЙ", "28/38", "Меню", "b19.png", "", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("КАЗАН КАБОБ", "40", "Меню", "b21.jpg", "", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("ЖАРОВНЯ ТФС (БАРАНИНА/ГОВЯДИНА)", "50", "Меню", "b22.jpg", "", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("СТЕЙК ИЗ ФОРЕЛИ", "25", "Меню", "b23.jpg", "", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("ТАБАКА", "58", "Меню", "b24.jpg", "", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("КОРЕЙКА БАРАНИНА", "50", "Меню", "b25.jpg", "", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("СТЕЙК ИЗ ГОВЯДИНЫ", "50", "Меню", "b26.jpg", "", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("ЧИЗКЕЙК", "12", "Меню", "b27.jpg", "", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("РАФАЭЛЛО", "12", "Меню", "b28.jpg", "", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("НАПОЛЕОН", "10", "Меню", "b29.jpg", "", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("ТИРАМИСУ", "12", "Меню", "b30.jpg", "", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("ФРУКТОВАЯ НАРЕЗКА (Большая)", "75", "Меню", "b31.jpg", "", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("ФРУКТОВАЯ НАРЕЗКА (Средняя)", "50", "Меню", "b32.jpg", "", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("КЕШЬЮ", "45", "Меню", "b33.jpg", "", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("ФИСТАШКИ", "45", "Меню", "b34.jpg", "", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("ФИСТАШКИ", "45", "Меню", "b34.jpg", "", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("АМЕРИКАНО", "15", "Меню", "b35.jpg", "", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("КАПУЧИНO", "18", "Меню", "b36.jpg", "", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("ЛАТТЕ", "18", "Меню", "b37.jpg", "", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("ЭСПРЕССО", "12", "Меню", "b38.jpg", "", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("ЧАЙ (Зелёный / черный)", "5", "Меню", "b39.jpg", "", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("ПАСТА БОЛОНЕЗА", "31", "Меню", "b1.webp", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("ПАСТА ФИТУЧИНИ", "35", "Меню", "b2.webp", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("ПАСТА ПЕНЕ", "32", "Меню", "b3.webp", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("ПАСТА СОБА", "23", "Меню", "b4.webp", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("ГНЁЗДА С ГОВЯДИНОЙ", "27", "Меню", "b5.webp", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("САЛАТ ТАЙСКИЙ", "34", "Меню", "b6.webp", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("САЛАТ TFC", "35", "Меню", "b7.webp", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("ХРУСТЯЩИЙ БАКЛАЖАН", "17", "Меню", "b8.webp", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("САЛАТ ЦЕЗАРЬ", "25", "Меню", "b9.webp", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("САЛАТ ЗЕЛЁНАЯ ЛУЖАЙКА", "15", "Меню", "b10.webp", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("ГРЕЧЕСКИЙ САЛАТ", "34", "Меню", "b11.webp", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("СУП МЕРДЖИМЕК", "15", "Меню", "b12.webp", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("БОРЩ", "25", "Меню", "b13.webp", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("ГРИБНОЙ СУП", "26", "Меню", "b14.webp", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("ЛАГМАН", "21", "Меню", "b15.webp", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("СУП TFC", "28", "Меню", "b16.webp", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("ЧАХОВ БИЛИ", "26", "Меню", "b17.webp", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("БИФШ СТЕКС", "25/35", "Меню", "b18.webp", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("КОТЛЕТ ПО-КИЕВСКИЙ", "28/38", "Меню", "b19.webp", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("КАЗАН КАБОБ", "40", "Меню", "b21.webp", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("ЖАРОВНЯ ТФС (БАРАНИНА/ГОВЯДИНА)", "50", "Меню", "b22.webp", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("СТЕЙК ИЗ ФОРЕЛИ", "25", "Меню", "b23.webp", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("ТАБАКА", "58", "Меню", "b24.webp", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("КОРЕЙКА БАРАНИНА", "50", "Меню", "b25.webp", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("СТЕЙК ИЗ ГОВЯДИНЫ", "50", "Меню", "b26.webp", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("ЧИЗКЕЙК", "12", "Меню", "b27.webp", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("РАФАЭЛЛО", "12", "Меню", "b28.webp", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("НАПОЛЕОН", "10", "Меню", "b29.webp", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("ТИРАМИСУ", "12", "Меню", "b30.webp", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("ФРУКТОВАЯ НАРЕЗКА (Большая)", "75", "Меню", "b31.webp", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("ФРУКТОВАЯ НАРЕЗКА (Средняя)", "50", "Меню", "b32.webp", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("КЕШЬЮ", "45", "Меню", "b33.webp", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("ФИСТАШКИ", "45", "Меню", "b34.webp", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("ФИСТАШКИ", "45", "Меню", "b34.webp", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("АМЕРИКАНО", "15", "Меню", "b35.webp", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("КАПУЧИНO", "18", "Меню", "b36.webp", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("ЛАТТЕ", "18", "Меню", "b37.webp", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("ЭСПРЕССО", "12", "Меню", "b38.webp", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("ЧАЙ (Зелёный / черный)", "5", "Меню", "b39.webp", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("ПАСТА БОЛОНЕЗА", "31", "Меню", "b1.webp", "", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("ПАСТА ФИТУЧИНИ", "35", "Меню", "b2.webp", "", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("ПАСТА ПЕНЕ", "32", "Меню", "b3.webp", "", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("ПАСТА СОБА", "23", "Меню", "b4.webp", "", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("ГНЁЗДА С ГОВЯДИНОЙ", "27", "Меню", "b5.webp", "", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("САЛАТ ТАЙСКИЙ", "34", "Меню", "b6.webp", "", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("САЛАТ TFC", "35", "Меню", "b7.webp", "", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("ХРУСТЯЩИЙ БАКЛАЖАН", "17", "Меню", "b8.webp", "", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("САЛАТ ЦЕЗАРЬ", "25", "Меню", "b9.webp", "", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("САЛАТ ЗЕЛЁНАЯ ЛУЖАЙКА", "15", "Меню", "b10.webp", "", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("ГРЕЧЕСКИЙ САЛАТ", "34", "Меню", "b11.webp", "", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("СУП МЕРДЖИМЕК", "15", "Меню", "b12.webp", "", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("БОРЩ", "25", "Меню", "b13.webp", "", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("ГРИБНОЙ СУП", "26", "Меню", "b14.webp", "", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("ЛАГМАН", "21", "Меню", "b15.webp", "", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("СУП TFC", "28", "Меню", "b16.webp", "", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("ЧАХОВ БИЛИ", "26", "Меню", "b17.webp", "", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("БИФШ СТЕКС", "25/35", "Меню", "b18.webp", "", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("КОТЛЕТ ПО-КИЕВСКИЙ", "28/38", "Меню", "b19.webp", "", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("КАЗАН КАБОБ", "40", "Меню", "b21.webp", "", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("ЖАРОВНЯ ТФС (БАРАНИНА/ГОВЯДИНА)", "50", "Меню", "b22.webp", "", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("СТЕЙК ИЗ ФОРЕЛИ", "25", "Меню", "b23.webp", "", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("ТАБАКА", "58", "Меню", "b24.webp", "", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("КОРЕЙКА БАРАНИНА", "50", "Меню", "b25.webp", "", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("СТЕЙК ИЗ ГОВЯДИНЫ", "50", "Меню", "b26.webp", "", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("ЧИЗКЕЙК", "12", "Меню", "b27.webp", "", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("РАФАЭЛЛО", "12", "Меню", "b28.webp", "", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("НАПОЛЕОН", "10", "Меню", "b29.webp", "", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("ТИРАМИСУ", "12", "Меню", "b30.webp", "", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("ФРУКТОВАЯ НАРЕЗКА (Большая)", "75", "Меню", "b31.webp", "", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("ФРУКТОВАЯ НАРЕЗКА (Средняя)", "50", "Меню", "b32.webp", "", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("КЕШЬЮ", "45", "Меню", "b33.webp", "", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("ФИСТАШКИ", "45", "Меню", "b34.webp", "", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("ФИСТАШКИ", "45", "Меню", "b34.webp", "", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("АМЕРИКАНО", "15", "Меню", "b35.webp", "", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("КАПУЧИНO", "18", "Меню", "b36.webp", "", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("ЛАТТЕ", "18", "Меню", "b37.webp", "", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("ЭСПРЕССО", "12", "Меню", "b38.webp", "", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("ЧАЙ (Зелёный / черный)", "5", "Меню", "b39.webp", "", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
 
         # ПИЦЦА
-        ("ПИЦЦА ГОВЯДИНА", "65/87", "Пицца", "a1.png", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("ПИЦЦА АССОРТИ", "68/88", "Пицца", "a2.png", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("ПИЦЦА ЧЕТЫРЕ СЫРА", "61/78", "Пицца", "a3.png", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("ПИЦЦА ЧЕРНАЯ МЕТКА", "62/79", "Пицца", "a4.png", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("ПИЦЦА ТОНИ МОНТАНА", "73/90", "Пицца", "a5.png", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("ПИЦЦА TFC", "68/90", "Пицца", "a6.png", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("ПИЦЦА ПЕППЕРОНИ", "63/75", "Пицца", "a7.png", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("ПИЦЦА КУРИНАЯ", "65/84", "Пицца", "a8.png", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("ХАЧАПУРИ ПО-АДЖАРСКИ", "35", "Пицца", "a9.png", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("ХАЧАПУРИ МЕГРЕЛЬСКИЙ", "40", "Пицца", "a10.png", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("ПИЦЦА ГОВЯДИНА", "65/87", "Пицца", "a1.webp", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("ПИЦЦА АССОРТИ", "68/88", "Пицца", "a2.webp", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("ПИЦЦА ЧЕТЫРЕ СЫРА", "61/78", "Пицца", "a3.webp", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("ПИЦЦА ЧЕРНАЯ МЕТКА", "62/79", "Пицца", "a4.webp", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("ПИЦЦА ТОНИ МОНТАНА", "73/90", "Пицца", "a5.webp", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("ПИЦЦА TFC", "68/90", "Пицца", "a6.webp", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("ПИЦЦА ПЕППЕРОНИ", "63/75", "Пицца", "a7.webp", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("ПИЦЦА КУРИНАЯ", "65/84", "Пицца", "a8.webp", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("ХАЧАПУРИ ПО-АДЖАРСКИ", "35", "Пицца", "a9.webp", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("ХАЧАПУРИ МЕГРЕЛЬСКИЙ", "40", "Пицца", "a10.webp", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
 
         # СУШИ
-        ("МИНИ РОЛЛЫ С СЫРОМ", "25/35", "Суши", "a.png", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("СИЯКИ МАКИ", "24/34", "Суши", "b.png", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("МИНИ РОЛЛЫ ФИЛАДЕЛЬФИЯ", "26/36", "Суши", "c.png", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("УНАГИ КАПА МАКИ", "27/37", "Суши", "d.png", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("ЗАПЕЧЕНЫЙ САМУРАЙ", "51", "Суши", "e.png", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("ЗАПЕЧЕНЫЙ УНАГИ", "61", "Суши", "f.png", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("ЗАПЕЧЕННАЯ КАЛИФОРНИЯ С КРЕВЕТКОЙ", "59/69", "Суши", "g.png", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("ЗАПЕЧЕНЫЙ СЯКЕ", "54/64", "Суши", "h.png", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("ТЕМПУРА КРАЙЗИ", "44", "Суши", "i.png", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("ТЕМПУРА СНЕЖНЫЙ КРАБ", "45", "Суши", "j.png", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("ОВОЩНАЯ ТЕМПУРА", "35", "Суши", "k.png", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("ТЕМПУРА ЦЕЗАРЬ", "38", "Суши", "l.png", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("РОЛЛ КАНАДА TFC", "60", "Суши", "m.png", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("РОЛЛ САНСИ", "58", "Суши", "n.png", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("КАЛИФОРНИЯ СНЕЖНЫЙ КРАБ", "51", "Суши", "o.png", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("РОЛЛ ФИЛАДЕЛЬФИЯ", "58", "Суши", "p.png", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("СУШИ С КРЕВЕТКОЙ", "13", "Суши", "q.png", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("СУШИ С УГЛЕМ", "13", "Суши", "r.png", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("СУШИ С ЛОСОСЬЮ", "17", "Суши", "s.png", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("СУШИ ЗАПЕЧЕНЫЙ ЛОСОСЬ", "17", "Суши", "t.png", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("СУШИ ОСТРЫЕ С ТУНЦОМ", "12", "Суши", "u.png", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("СУШИ С УГРЕМ", "13", "Суши", "v.png", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("СЕТ ТЕМПУРА", "135", "Суши", "w.png", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("СЕТ КАНАДА TFC", "160", "Суши", "x.png", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("СЕТ ЗАПЕЧЁННЫЙ", "146", "Суши", "y.png", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("МИНИ РОЛЛЫ С СЫРОМ", "25/35", "Суши", "a.webp", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("СИЯКИ МАКИ", "24/34", "Суши", "b.webp", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("МИНИ РОЛЛЫ ФИЛАДЕЛЬФИЯ", "26/36", "Суши", "c.webp", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("УНАГИ КАПА МАКИ", "27/37", "Суши", "d.webp", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("ЗАПЕЧЕНЫЙ САМУРАЙ", "51", "Суши", "e.webp", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("ЗАПЕЧЕНЫЙ УНАГИ", "61", "Суши", "f.webp", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("ЗАПЕЧЕННАЯ КАЛИФОРНИЯ С КРЕВЕТКОЙ", "59/69", "Суши", "g.webp", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("ЗАПЕЧЕНЫЙ СЯКЕ", "54/64", "Суши", "h.webp", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("ТЕМПУРА КРАЙЗИ", "44", "Суши", "i.webp", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("ТЕМПУРА СНЕЖНЫЙ КРАБ", "45", "Суши", "j.webp", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("ОВОЩНАЯ ТЕМПУРА", "35", "Суши", "k.webp", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("ТЕМПУРА ЦЕЗАРЬ", "38", "Суши", "l.webp", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("РОЛЛ КАНАДА TFC", "60", "Суши", "m.webp", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("РОЛЛ САНСИ", "58", "Суши", "n.webp", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("КАЛИФОРНИЯ СНЕЖНЫЙ КРАБ", "51", "Суши", "o.webp", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("РОЛЛ ФИЛАДЕЛЬФИЯ", "58", "Суши", "p.webp", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("СУШИ С КРЕВЕТКОЙ", "13", "Суши", "q.webp", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("СУШИ С УГЛЕМ", "13", "Суши", "r.webp", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("СУШИ С ЛОСОСЬЮ", "17", "Суши", "s.webp", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("СУШИ ЗАПЕЧЕНЫЙ ЛОСОСЬ", "17", "Суши", "t.webp", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("СУШИ ОСТРЫЕ С ТУНЦОМ", "12", "Суши", "u.webp", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("СУШИ С УГРЕМ", "13", "Суши", "v.webp", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("СЕТ ТЕМПУРА", "135", "Суши", "w.webp", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("СЕТ КАНАДА TFC", "160", "Суши", "x.webp", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("СЕТ ЗАПЕЧЁННЫЙ", "146", "Суши", "y.webp", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
 
         # ФАСТ ФУД
-        ("НОН-ДОГ", "5/7", "Фастфуд", "1.png", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("БУЛОЧКА", "6/8", "Фастфуд", "2.png", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("М-ДОГ", "10", "Фастфуд", "3.png", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("TFC-ДОГ", "18/30", "Фастфуд", "4.png", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("ЧИКЕН-ДОГ", "12/24", "Фастфуд", "5.png", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("НАЧО-ДОГ", "14/26", "Фастфуд", "6.png", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("ЧИКЕНЧИЗ-ДОГ", "16/28", "Фастфуд", "7.png", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("ШЕФ-ДОГ", "17/29", "Фастфуд", "8.png", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("АМЕРИКАНО-ДОГ", "16/25", "Фастфуд", "9.png", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("ИТАЛИ-ДОГ", "12/20", "Фастфуд", "10.png", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("БИФ-ДОГ", "41", "Фастфуд", "11.png", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("КЛАССИК БУРГЕР", "23", "Фастфуд", "12.png", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("КЛАССИК ЧИЗБУРГЕР", "27", "Фастфуд", "13.png", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("ДАБЛ ЧИЗБУРГЕР", "43", "Фастфуд", "14.png", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("ДАБЛ БУРГЕР", "37", "Фастфуд", "15.png", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("TFC БУРГЕР", "48", "Фастфуд", "16.png", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("ШЕФ БУРГЕР", "51", "Фастфуд", "17.png", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("ТОРТИЛЬЯ С КУРИЦЕЙ И СЫРОМ", "23", "Фастфуд", "18.png", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("ТОРТИЛЬЯ С КУРИЦЕЙ", "15", "Фастфуд", "19.png", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("ТОРТИЛЬЯ МИКС", "26", "Фастфуд", "20.png", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("ТОРТИЛЬЯ TFC", "40", "Фастфуд", "21.png", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("ТОРТИЛЬЯ ГОВЯДИНА", "32", "Фастфуд", "22.png", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("ТОРТИЛЬЯ В ТЕМПУРЕ", "28", "Фастфуд", "23.png", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("СЭНДВИЧ SIMPLE", "19", "Фастфуд", "24.png", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("СЭНДВИЧ С СЫРОМ", "23", "Фастфуд", "25.png", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("КАРТОШКА ФРИ", "12/17", "Фастфуд", "28.png", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("КАРТОФЕЛЬ ПО-ДЕРЕВЕНСКИ", "13/18", "Фастфуд", "29.png", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("КАРТОФЕЛЬНЫЕ ШАРИКИ", "14/19", "Фастфуд", "30.png", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("НАГГЕТСЫ", "17/27", "Фастфуд", "31.png", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("ОСТРЫЕ КРЫЛЫШКИ", "35/45", "Фастфуд", "32.png", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("СЛАДКИЕ КРЫЛЫШКИ", "36/46", "Фастфуд", "33.png", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("КУРИНЫЕ НОЖКИ", "69/109", "Фастфуд", "34.png", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("СЫРНЫЕ ПАЛОЧКИ", "28", "Фастфуд", "35.png", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("БАСКЕТ", "130", "Фастфуд", "36.png", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("НОН-ДОГ", "5/7", "Фастфуд", "1.webp", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("БУЛОЧКА", "6/8", "Фастфуд", "2.webp", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("М-ДОГ", "10", "Фастфуд", "3.webp", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("TFC-ДОГ", "18/30", "Фастфуд", "4.webp", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("ЧИКЕН-ДОГ", "12/24", "Фастфуд", "5.webp", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("НАЧО-ДОГ", "14/26", "Фастфуд", "6.webp", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("ЧИКЕНЧИЗ-ДОГ", "16/28", "Фастфуд", "7.webp", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("ШЕФ-ДОГ", "17/29", "Фастфуд", "8.webp", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("АМЕРИКАНО-ДОГ", "16/25", "Фастфуд", "9.webp", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("ИТАЛИ-ДОГ", "12/20", "Фастфуд", "10.webp", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("БИФ-ДОГ", "41", "Фастфуд", "11.webp", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("КЛАССИК БУРГЕР", "23", "Фастфуд", "12.webp", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("КЛАССИК ЧИЗБУРГЕР", "27", "Фастфуд", "13.webp", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("ДАБЛ ЧИЗБУРГЕР", "43", "Фастфуд", "14.webp", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("ДАБЛ БУРГЕР", "37", "Фастфуд", "15.webp", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("TFC БУРГЕР", "48", "Фастфуд", "16.webp", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("ШЕФ БУРГЕР", "51", "Фастфуд", "17.webp", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("ТОРТИЛЬЯ С КУРИЦЕЙ И СЫРОМ", "23", "Фастфуд", "18.webp", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("ТОРТИЛЬЯ С КУРИЦЕЙ", "15", "Фастфуд", "19.webp", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("ТОРТИЛЬЯ МИКС", "26", "Фастфуд", "20.webp", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("ТОРТИЛЬЯ TFC", "40", "Фастфуд", "21.webp", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("ТОРТИЛЬЯ ГОВЯДИНА", "32", "Фастфуд", "22.webp", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("ТОРТИЛЬЯ В ТЕМПУРЕ", "28", "Фастфуд", "23.webp", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("СЭНДВИЧ SIMPLE", "19", "Фастфуд", "24.webp", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("СЭНДВИЧ С СЫРОМ", "23", "Фастфуд", "25.webp", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("КАРТОШКА ФРИ", "12/17", "Фастфуд", "28.webp", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("КАРТОФЕЛЬ ПО-ДЕРЕВЕНСКИ", "13/18", "Фастфуд", "29.webp", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("КАРТОФЕЛЬНЫЕ ШАРИКИ", "14/19", "Фастфуд", "30.webp", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("НАГГЕТСЫ", "17/27", "Фастфуд", "31.webp", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("ОСТРЫЕ КРЫЛЫШКИ", "35/45", "Фастфуд", "32.webp", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("СЛАДКИЕ КРЫЛЫШКИ", "36/46", "Фастфуд", "33.webp", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("КУРИНЫЕ НОЖКИ", "69/109", "Фастфуд", "34.webp", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("СЫРНЫЕ ПАЛОЧКИ", "28", "Фастфуд", "35.webp", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("БАСКЕТ", "130", "Фастфуд", "36.webp", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
     ]
 
     # Тафтиши мавҷудияти хӯрокҳо ва ворид кардани онҳо бо сутуни subcategory
@@ -306,7 +306,7 @@ def init_db() -> None:
         """, (name, price, cat, sub, img, created))
 
     # Тоза кардани расмҳои гумшуда
-    cur.execute("UPDATE foods SET image_url = '' WHERE image_url IN ('d9.png', 'd10.png', 'd11.png')")
+    cur.execute("UPDATE foods SET image_url = '' WHERE image_url IN ('d9.png', 'd10.png', 'd11.png', 'd9.webp', 'd10.webp', 'd11.webp')")
 
     conn.commit()
     conn.close()
@@ -427,7 +427,7 @@ FOOD_DETAIL_TEMPLATE = r"""
                         Ваш браузер не поддерживает видео.
                     </video>
                 {% elif food.image_path %}
-                    <img src="{{ food.image_path }}" alt="{{ food.name }}" class="w-full h-full object-contain mx-auto p-2">
+                    <img src="{{ food.image_path }}" alt="{{ food.name }}" class="w-full h-full object-contain mx-auto p-2" loading="lazy">
                 {% else %}
                     <div class="w-full h-full bg-gradient-to-br from-red-600 to-red-900 flex items-center justify-center">
                         <i class="fas fa-utensils text-white text-6xl opacity-30"></i>
@@ -1680,7 +1680,7 @@ HTML_TEMPLATE = r"""
                 </button>
             </div>
             <div class="px-6 py-4 space-y-4 max-h-[75vh] overflow-y-auto">
-                <img id="info-food-image" src="" alt="" class="w-full max-h-64 object-contain rounded-2xl border border-white/10 bg-black/10 mx-auto" style="height: auto;">
+                <img id="info-food-image" src="" alt="" class="w-full max-h-64 object-contain rounded-2xl border border-white/10 bg-black/10 mx-auto" style="height: auto;" loading="lazy">
                 <div class="p-3 rounded-2xl bg-white/5 border border-white/10">
                     <div id="info-food-description" class="text-xs leading-relaxed whitespace-pre-wrap" style="color: var(--modal-text-muted);"></div>
                 </div>
@@ -1871,7 +1871,7 @@ HTML_TEMPLATE = r"""
             <div id="filtered-product-grid" class="grid product-grid gap-8">
                 {% for food in categories.get('Меню', []) %}
                 <div class="product-card food-card" data-food-id="{{ food.id }}" data-name="{{ food.name }}" data-subcategory="{{ food.subcategory|default('') }}" data-description="{{ food.description|e }}">
-                    <img src="{{ url_for('static', filename='images/' + food.image_url) if food.image_url else '' }}" alt="{{ food.name }}">
+                    <img src="{{ url_for('static', filename='images/' + food.image_url) if food.image_url else '' }}" alt="{{ food.name }}" loading="lazy">
                     <div class="food-description hidden">{{ food.description }}</div>
                     <div class="food-info-sign" title="Полная информация о блюде">...</div>
                     <div class="product-info">
@@ -1924,7 +1924,7 @@ HTML_TEMPLATE = r"""
             <div id="fastfood-filtered-product-grid" class="grid product-grid gap-8">
                 {% for food in categories.get('Фастфуд', []) %}
                 <div class="product-card food-card" data-food-id="{{ food.id }}" data-name="{{ food.name }}" data-subcategory="{{ food.subcategory|default('') }}" data-description="{{ food.description|e }}">
-                    <img src="{{ url_for('static', filename='images/' + food.image_url) if food.image_url else '' }}" alt="{{ food.name }}">
+                    <img src="{{ url_for('static', filename='images/' + food.image_url) if food.image_url else '' }}" alt="{{ food.name }}" loading="lazy">
                     <div class="food-description hidden">{{ food.description }}</div>
                     <div class="food-info-sign" title="Полная информация о блюде">...</div>
                     <div class="product-info">
@@ -1965,7 +1965,7 @@ HTML_TEMPLATE = r"""
             <div id="sushi-filtered-product-grid" class="grid product-grid gap-8">
                 {% for food in categories.get('Суши', []) %}
                 <div class="product-card food-card" data-food-id="{{ food.id }}" data-name="{{ food.name }}" data-subcategory="{{ food.subcategory|default('') }}" data-description="{{ food.description|e }}">
-                    <img src="{{ url_for('static', filename='images/' + food.image_url) if food.image_url else '' }}" alt="{{ food.name }}">
+                    <img src="{{ url_for('static', filename='images/' + food.image_url) if food.image_url else '' }}" alt="{{ food.name }}" loading="lazy">
                     <div class="food-description hidden">{{ food.description }}</div>
                     <div class="food-info-sign" title="Полная информация о блюде">...</div>
                     <div class="product-info">
@@ -2006,7 +2006,7 @@ HTML_TEMPLATE = r"""
             <div id="pizza-filtered-product-grid" class="grid product-grid gap-8">
                 {% for food in categories.get('Пицца', []) %}
                 <div class="product-card food-card" data-food-id="{{ food.id }}" data-name="{{ food.name }}" data-subcategory="{{ food.subcategory|default('') }}" data-description="{{ food.description|e }}">
-                    <img src="{{ url_for('static', filename='images/' + food.image_url) if food.image_url else '' }}" alt="{{ food.name }}">
+                    <img src="{{ url_for('static', filename='images/' + food.image_url) if food.image_url else '' }}" alt="{{ food.name }}" loading="lazy">
                     <div class="food-description hidden">{{ food.description }}</div>
                     <div class="food-info-sign" title="Полная информация о блюде">...</div>
                     <div class="product-info">
@@ -2055,7 +2055,7 @@ HTML_TEMPLATE = r"""
             <div id="summer-menu-filtered-product-grid" class="grid product-grid gap-8">
                 {% for food in categories.get('Летнее меню', []) %}
                 <div class="product-card food-card" data-food-id="{{ food.id }}" data-name="{{ food.name }}" data-subcategory="{{ food.subcategory|default('') }}" data-description="{{ food.description|e }}">
-                    <img src="{{ url_for('static', filename='images/' + food.image_url) if food.image_url else '' }}" alt="{{ food.name }}">
+                    <img src="{{ url_for('static', filename='images/' + food.image_url) if food.image_url else '' }}" alt="{{ food.name }}" loading="lazy">
                     <div class="food-description hidden">{{ food.description }}</div>
                     <div class="food-info-sign" title="Полная информация о блюде">...</div>
                     <div class="product-info">
@@ -2081,7 +2081,7 @@ HTML_TEMPLATE = r"""
             <div class="grid product-grid gap-8">
                 {% for food in categories.get('Комбо', []) %}
                 <div class="product-card food-card" data-food-id="{{ food.id }}" data-name="{{ food.name }}" data-subcategory="{{ food.subcategory|default('') }}" data-description="{{ food.description|e }}">
-                    <img src="{{ url_for('static', filename='images/' + food.image_url) if food.image_url else '' }}" alt="{{ food.name }}">
+                    <img src="{{ url_for('static', filename='images/' + food.image_url) if food.image_url else '' }}" alt="{{ food.name }}" loading="lazy">
                     <div class="food-description hidden">{{ food.description }}</div>
                     <div class="food-info-sign" title="Полная информация о блюде">...</div>
                     <div class="product-info">
@@ -2132,7 +2132,7 @@ HTML_TEMPLATE = r"""
                 <div class="product-card text-review-card flex flex-col justify-between p-4" style="background: var(--card-bg); border: 1px dashed var(--notif-item-border-left);">
                     <div class="flex flex-col">
                         {% if rev.image_url %}
-                        <img src="{{ url_for('static', filename='images/' + rev.image_url) }}" class="w-full aspect-square object-cover rounded-xl mb-3 shadow-lg">
+                        <img src="{{ url_for('static', filename='images/' + rev.image_url) }}" class="w-full aspect-square object-cover rounded-xl mb-3 shadow-lg" loading="lazy">
                         {% endif %}
                         <div class="flex justify-between items-start mb-2">
                             <h5 class="font-bold text-[10px] uppercase" style="color: var(--tfc-gold);">{{ rev.name }}</h5>
@@ -2156,7 +2156,7 @@ HTML_TEMPLATE = r"""
                 <!-- 2. Отзывҳои суратдор -->
                 {% for food in [] %}
                 <div class="product-card">
-                    <img src="{{ url_for('static', filename='images/' + food.image_url) if food.image_url else '' }}" alt="{{ food.name }}">
+                    <img src="{{ url_for('static', filename='images/' + food.image_url) if food.image_url else '' }}" alt="{{ food.name }}" loading="lazy">
                     <div class="product-info">
                         <h3>{{ food.name }}</h3>
                         <div class="price-tag">{{ food.price }}с</div>
@@ -2196,7 +2196,7 @@ HTML_TEMPLATE = r"""
                             </div>
                         </div>
                         {% else %}
-                        <img src="{{ url_for('static', filename='images/' + item.image_url) }}" alt="{{ item.title }}" class="w-full aspect-video object-cover block">
+                        <img src="{{ url_for('static', filename='images/' + item.image_url) }}" alt="{{ item.title }}" class="w-full aspect-video object-cover block" loading="lazy">
                         {% endif %}
                     {% endif %}
                     <div class="product-info p-6">
@@ -2308,7 +2308,7 @@ HTML_TEMPLATE = r"""
                             </div>
                         </div>
                         {% else %}
-                        <img src="{{ url_for('static', filename='images/' + food.image_url) }}" alt="{{ food.name }}" class="h-44 w-full object-cover">
+                        <img src="{{ url_for('static', filename='images/' + food.image_url) }}" alt="{{ food.name }}" class="h-44 w-full object-cover" loading="lazy">
                         {% endif %}
                     {% endif %}
                     <div class="product-info !pb-6 px-5 !text-left">
