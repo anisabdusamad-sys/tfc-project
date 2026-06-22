@@ -433,7 +433,7 @@ FOOD_DETAIL_TEMPLATE = r"""
                         Ваш браузер не поддерживает видео.
                     </video>
                 {% elif food.image_path %}
-                    <img src="{{ food.image_path }}" alt="{{ food.name }}" class="w-full h-full object-contain mx-auto p-2">
+                    <img src="{{ food.image_path }}" alt="{{ food.name }}" class="w-full h-full object-contain mx-auto p-2" loading="lazy">
                 {% else %}
                     <div class="w-full h-full bg-gradient-to-br from-red-600 to-red-900 flex items-center justify-center">
                         <i class="fas fa-utensils text-white text-6xl opacity-30"></i>
@@ -1877,7 +1877,7 @@ HTML_TEMPLATE = r"""
             <div id="filtered-product-grid" class="grid product-grid gap-8">
                 {% for food in categories.get('Меню', []) %}
                 <div class="product-card food-card" data-food-id="{{ food.id }}" data-name="{{ food.name }}" data-subcategory="{{ food.subcategory|default('') }}" data-description="{{ food.description|e }}">
-                    <img src="{{ url_for('static', filename='images/' + food.image_url) if food.image_url else '' }}" alt="{{ food.name }}">
+                    <img src="{{ url_for('static', filename='images/' + food.image_url) if food.image_url else '' }}" alt="{{ food.name }}" loading="lazy">
                     <div class="food-description hidden">{{ food.description }}</div>
                     <div class="food-info-sign" title="Полная информация о блюде">...</div>
                     <div class="product-info">
@@ -1930,7 +1930,7 @@ HTML_TEMPLATE = r"""
             <div id="fastfood-filtered-product-grid" class="grid product-grid gap-8">
                 {% for food in categories.get('Фастфуд', []) %}
                 <div class="product-card food-card" data-food-id="{{ food.id }}" data-name="{{ food.name }}" data-subcategory="{{ food.subcategory|default('') }}" data-description="{{ food.description|e }}">
-                    <img src="{{ url_for('static', filename='images/' + food.image_url) if food.image_url else '' }}" alt="{{ food.name }}">
+                    <img src="{{ url_for('static', filename='images/' + food.image_url) if food.image_url else '' }}" alt="{{ food.name }}" loading="lazy">
                     <div class="food-description hidden">{{ food.description }}</div>
                     <div class="food-info-sign" title="Полная информация о блюде">...</div>
                     <div class="product-info">
@@ -1971,7 +1971,7 @@ HTML_TEMPLATE = r"""
             <div id="sushi-filtered-product-grid" class="grid product-grid gap-8">
                 {% for food in categories.get('Суши', []) %}
                 <div class="product-card food-card" data-food-id="{{ food.id }}" data-name="{{ food.name }}" data-subcategory="{{ food.subcategory|default('') }}" data-description="{{ food.description|e }}">
-                    <img src="{{ url_for('static', filename='images/' + food.image_url) if food.image_url else '' }}" alt="{{ food.name }}">
+                    <img src="{{ url_for('static', filename='images/' + food.image_url) if food.image_url else '' }}" alt="{{ food.name }}" loading="lazy">
                     <div class="food-description hidden">{{ food.description }}</div>
                     <div class="food-info-sign" title="Полная информация о блюде">...</div>
                     <div class="product-info">
@@ -2012,7 +2012,7 @@ HTML_TEMPLATE = r"""
             <div id="pizza-filtered-product-grid" class="grid product-grid gap-8">
                 {% for food in categories.get('Пицца', []) %}
                 <div class="product-card food-card" data-food-id="{{ food.id }}" data-name="{{ food.name }}" data-subcategory="{{ food.subcategory|default('') }}" data-description="{{ food.description|e }}">
-                    <img src="{{ url_for('static', filename='images/' + food.image_url) if food.image_url else '' }}" alt="{{ food.name }}">
+                    <img src="{{ url_for('static', filename='images/' + food.image_url) if food.image_url else '' }}" alt="{{ food.name }}" loading="lazy">
                     <div class="food-description hidden">{{ food.description }}</div>
                     <div class="food-info-sign" title="Полная информация о блюде">...</div>
                     <div class="product-info">
@@ -2061,7 +2061,7 @@ HTML_TEMPLATE = r"""
             <div id="summer-menu-filtered-product-grid" class="grid product-grid gap-8">
                 {% for food in categories.get('Летнее меню', []) %}
                 <div class="product-card food-card" data-food-id="{{ food.id }}" data-name="{{ food.name }}" data-subcategory="{{ food.subcategory|default('') }}" data-description="{{ food.description|e }}">
-                    <img src="{{ url_for('static', filename='images/' + food.image_url) if food.image_url else '' }}" alt="{{ food.name }}">
+                    <img src="{{ url_for('static', filename='images/' + food.image_url) if food.image_url else '' }}" alt="{{ food.name }}" loading="lazy">
                     <div class="food-description hidden">{{ food.description }}</div>
                     <div class="food-info-sign" title="Полная информация о блюде">...</div>
                     <div class="product-info">
@@ -2138,7 +2138,7 @@ HTML_TEMPLATE = r"""
                 <div class="product-card text-review-card flex flex-col justify-between p-4" style="background: var(--card-bg); border: 1px dashed var(--notif-item-border-left);">
                     <div class="flex flex-col">
                         {% if rev.image_url %}
-                        <img src="{{ url_for('static', filename='images/' + rev.image_url) }}" class="w-full aspect-square object-cover rounded-xl mb-3 shadow-lg">
+                        <img src="{{ url_for('static', filename='images/' + rev.image_url) }}" class="w-full aspect-square object-cover rounded-xl mb-3 shadow-lg" loading="lazy">
                         {% endif %}
                         <div class="flex justify-between items-start mb-2">
                             <h5 class="font-bold text-[10px] uppercase" style="color: var(--tfc-gold);">{{ rev.name }}</h5>
@@ -2202,7 +2202,7 @@ HTML_TEMPLATE = r"""
                             </div>
                         </div>
                         {% else %}
-                        <img src="{{ url_for('static', filename='images/' + item.image_url) }}" alt="{{ item.title }}" class="w-full aspect-video object-cover block">
+                        <img src="{{ url_for('static', filename='images/' + item.image_url) }}" alt="{{ item.title }}" class="w-full aspect-video object-cover block" loading="lazy">
                         {% endif %}
                     {% endif %}
                     <div class="product-info p-6">
@@ -2314,7 +2314,7 @@ HTML_TEMPLATE = r"""
                             </div>
                         </div>
                         {% else %}
-                        <img src="{{ url_for('static', filename='images/' + food.image_url) }}" alt="{{ food.name }}" class="h-44 w-full object-cover">
+                        <img src="{{ url_for('static', filename='images/' + food.image_url) }}" alt="{{ food.name }}" class="h-44 w-full object-cover" loading="lazy">
                         {% endif %}
                     {% endif %}
                     <div class="product-info !pb-6 px-5 !text-left">
