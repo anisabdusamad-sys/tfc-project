@@ -18,6 +18,22 @@ app = Flask(__name__)
 CORS(app, resources={r"/api/*": {"origins": "*"}})
 UPLOAD_FOLDER = 'static/images'
 
+# Configure logging for better visibility in Render
+import logging
+import sys
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s [%(levelname)s] %(message)s',
+    handlers=[
+        logging.StreamHandler(sys.stdout)
+    ]
+)
+
+# Set Flask app logger
+app.logger.setLevel(logging.INFO)
+app.logger.addHandler(logging.StreamHandler(sys.stdout))
+
 # API Key for inter-app communication
 TFC_API_KEY = os.getenv("TFC_API_KEY", "tfc_secret_key_2026_xyz_secure")
 
