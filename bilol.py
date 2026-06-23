@@ -19,9 +19,20 @@ VAPID_PUBLIC_KEY = "BCX7B8_p9v7Z-S-l1M0W4Y1Z2X3C4V5B6N7M8L9K0J1I2H3G4F5E6D7C8B9A
 VAPID_PRIVATE_KEY = "m1N2B3V4C5X6Z7A8S9D0F1G2H3J4K5L6m1N2B3V4C5X"
 VAPID_CLAIMS = {"sub": "mailto:admin@tfc-kulob.tj"}
 
-API_KEY = "TFC_SECRET_SECURE_KEY_2026"
+API_KEY = os.getenv("TFC_API_KEY", "tfc_secret_key_2026_xyz_secure")
 
 DB_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "tfc_admin.db"))
+
+def require_api_key(f):
+    """Decorator to require API key for protected routes"""
+    from functools import wraps
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        api_key = request.headers.get('X-API-KEY')
+        if not api_key or api_key != API_KEY:
+            return jsonify({"error": "Дастрасӣ манъ аст! API Key хатост."}), 401
+        return f(*args, **kwargs)
+    return decorated_function
 
 def save_uploaded_media(file, prefix=""):
     if not file or file.filename == "":
@@ -1184,6 +1195,7 @@ HTML = r"""<!DOCTYPE html>
 
     <script>
         const STORAGE_KEY = 'tfc_admin_orders_v2';
+        const API_KEY = 'tfc_secret_key_2026_xyz_secure';
         let orders = [];
         let filterMode = 'all';
         let revenueChart = null;
@@ -1193,6 +1205,10 @@ HTML = r"""<!DOCTYPE html>
         let lastSeenOrderId = 0;
 
         const newOrderSound = new Audio('/static/music.mp3'); // Файли садоӣ бояд дар папкаи static бошад
+
+        function apiHeaders() {
+            return {'Content-Type': 'application/json', 'X-API-KEY': API_KEY};
+        }
 
         function showConfirm(msg, action) {
             document.getElementById('confirm-msg').textContent = msg;
@@ -1456,17 +1472,17 @@ HTML = r"""<!DOCTYPE html>
 
             await fetch('/api/orders/update-status', {
                 method: 'POST',
-                headers: {'Content-Type': 'application/json'},
+                headers: apiHeaders(),
                 body: JSON.stringify({ id: orderId, field: 'food', value: newFullText })
             });
             await fetch('/api/orders/update-status', {
                 method: 'POST',
-                headers: {'Content-Type': 'application/json'},
+                headers: apiHeaders(),
                 body: JSON.stringify({ id: orderId, field: 'refund', value: newRefund })
             });
             await fetch('/api/orders/update-status', {
                 method: 'POST',
-                headers: {'Content-Type': 'application/json'},
+                headers: apiHeaders(),
                 body: JSON.stringify({ id: orderId, field: 'out_of_stock', value: 1 })
             });
             
@@ -1488,7 +1504,7 @@ HTML = r"""<!DOCTYPE html>
                 try {
                     await fetch("/api/orders/update-status", {
                         method: "POST",
-                        headers: { "Content-Type": "application/json" },
+                        headers: apiHeaders(),
                         body: JSON.stringify({ id: id, field: 'estimated_time', value: order.estimated_time })
                     });
                 } catch (e) {}
@@ -1527,7 +1543,7 @@ HTML = r"""<!DOCTYPE html>
             try {
                 await fetch("/api/orders/update-status", {
                     method: "POST",
-                    headers: { "Content-Type": "application/json" },
+                    headers: apiHeaders(),
                     body: JSON.stringify(body)
                 });
             } catch (e) {}
@@ -1545,7 +1561,7 @@ HTML = r"""<!DOCTYPE html>
         async function deleteOrder(id) {
             showConfirm('Удалить этот заказ?', async () => {
                 try {
-                    const res = await fetch(`/api/orders/delete/${id}`, { method: 'DELETE' });
+                    const res = await fetch(`/api/orders/delete/${id}`, { method: 'DELETE', headers: apiHeaders() });
                     const data = await res.json();
                     if (data.ok) {
                         orders = orders.filter(o => o.id !== id);
@@ -1560,7 +1576,7 @@ HTML = r"""<!DOCTYPE html>
         async function clearAllOrders() {
             showConfirm('Удалить ВСЕ заказы из базы?', async () => {
                 try {
-                    const res = await fetch('/api/orders/clear-all', { method: 'POST' });
+                    const res = await fetch('/api/orders/clear-all', { method: 'POST', headers: apiHeaders() });
                     if (res.ok) {
                         orders = [];
                         localStorage.removeItem(STORAGE_KEY);
@@ -1665,7 +1681,7 @@ HTML = r"""<!DOCTYPE html>
 
         async function renderFullHistory() {
             try {
-                const res = await fetch('/api/orders/full-history');
+                const res = await fetch('/api/orders/full-history', { headers: apiHeaders() });
                 const data = await res.json();
                 const tbody = document.getElementById('full-history-table-body');
                 tbody.innerHTML = '';
@@ -1694,7 +1710,7 @@ HTML = r"""<!DOCTYPE html>
 
         async function clearFullHistory() {
             showConfirm('Вы уверены, что хотите очистить ПОЛНУЮ ИСТОРИЮ?', async () => {
-                const res = await fetch('/api/orders/clear-full-history', { method: 'POST' });
+                const res = await fetch('/api/orders/clear-full-history', { method: 'POST', headers: apiHeaders() });
                 if ((await res.json()).ok) { hideFullHistoryModal(); toast('История очищена'); }
             });
         }
@@ -1702,7 +1718,7 @@ HTML = r"""<!DOCTYPE html>
         async function verifyHistoryCode() {
             const code = document.getElementById('history-access-code').value;
             
-            const res = await fetch('/api/settings/get?key=admin_password');
+            const res = await fetch('/api/settings/get?key=admin_password', { headers: apiHeaders() });
             const data = await res.json();
             const correctCode = data.val || "159951.tfc";
 
@@ -1757,7 +1773,7 @@ HTML = r"""<!DOCTYPE html>
 
             const confirmRes = await fetch('/api/settings/set', {
                 method: 'POST',
-                headers: {'Content-Type': 'application/json'},
+                headers: apiHeaders(),
                 body: JSON.stringify({key: 'admin_password', val: newPass.trim()})
             });
             
@@ -1771,7 +1787,7 @@ HTML = r"""<!DOCTYPE html>
 
         async function renderHistoryData() {
             // Даъват кардани маълумоти нав аз сервер
-            const res = await fetch('/api/stats/daily-revenue');
+            const res = await fetch('/api/stats/daily-revenue', { headers: apiHeaders() });
             const data = await res.json();
             const stats = (data.ok ? data.stats : []).reverse(); // Аз кӯҳна ба нав барои график
 
@@ -1851,7 +1867,7 @@ HTML = r"""<!DOCTYPE html>
         async function clearHistory() {
             showConfirm('Очистить ВСЮ историю доходов?', async () => {
                 try {
-                    const res = await fetch('/api/stats/clear-history', { method: 'POST' });
+                    const res = await fetch('/api/stats/clear-history', { method: 'POST', headers: apiHeaders() });
                     const data = await res.json();
                     if (data.ok) {
                         toast('История доходов полностью очищена');
@@ -1900,7 +1916,7 @@ HTML = r"""<!DOCTYPE html>
 
         async function renderPopularFoods() {
             try {
-                const res = await fetch('/api/stats/popular-foods');
+                const res = await fetch('/api/stats/popular-foods', { headers: apiHeaders() });
                 const data = await res.json();
                 const tbody = document.getElementById('popular-foods-table-body');
                 tbody.innerHTML = '';
@@ -2014,7 +2030,7 @@ HTML = r"""<!DOCTYPE html>
 
         async function fetchNewOrders(isInitial) {
             // Танҳо як бор fetch мекунем бо истифодаи lastSeenOrderId
-            const res = await fetch(`/api/orders/since?last_id=${lastSeenOrderId}`, { cache: 'no-store' });
+            const res = await fetch(`/api/orders/since?last_id=${lastSeenOrderId}`, { cache: 'no-store', headers: apiHeaders() });
             if (!res.ok) return;
             const data = await res.json();
             const newOrders = Array.isArray(data.orders) ? data.orders : [];
@@ -2153,7 +2169,7 @@ HTML = r"""<!DOCTYPE html>
 
         async function loadFoods() {
             try {
-                const response = await fetch('/api/foods/list');
+                const response = await fetch('/api/foods/list', { headers: apiHeaders() });
                 const data = await response.json();
                 foods = Array.isArray(data.foods) ? data.foods : [];
             } catch (e) {
@@ -2302,7 +2318,7 @@ HTML = r"""<!DOCTYPE html>
         let aktsii = [];
         async function loadAktsii() {
             try {
-                const res = await fetch('/api/aktsii/list');
+                const res = await fetch('/api/aktsii/list', { headers: apiHeaders() });
                 const data = await res.json();
                 aktsii = data.aktsii || [];
                 renderAktsii();
@@ -2360,7 +2376,7 @@ HTML = r"""<!DOCTYPE html>
                 formData.append('image', fileInput.files[0]);
             }
 
-            const res = await fetch('/api/aktsii/add', { method: 'POST', body: formData });
+            const res = await fetch('/api/aktsii/add', { method: 'POST', headers: apiHeaders(), body: formData });
             const data = await res.json();
             foodSubmitBtn.disabled = false;
             
@@ -2375,7 +2391,7 @@ HTML = r"""<!DOCTYPE html>
 
         async function deleteAktsii(id) {
             showConfirm('Удалить эту акцию?', async () => {
-                const res = await fetch(`/api/aktsii/delete/${id}`, { method: 'DELETE' });
+                const res = await fetch(`/api/aktsii/delete/${id}`, { method: 'DELETE', headers: apiHeaders() });
                 if ((await res.json()).ok) { loadAktsii(); toast('Акция удалена'); }
             });
         }
@@ -2495,6 +2511,7 @@ HTML = r"""<!DOCTYPE html>
             try {
                 const response = await fetch(url, {
                     method: method,
+                    headers: apiHeaders(),
                     body: formData
                 });
                 const data = await response.json();
@@ -2525,7 +2542,7 @@ HTML = r"""<!DOCTYPE html>
                 try {
                     const response = await fetch(`/api/foods/delete/${foodId}`, {
                         method: 'DELETE',
-                        headers: { 'Content-Type': 'application/json' }
+                        headers: apiHeaders()
                     });
                     const data = await response.json();
                     if (data.ok) {
@@ -2564,10 +2581,9 @@ def add_cors_headers(resp):
 
 
 @app.route("/api/external/sync", methods=["POST"])
+@require_api_key
 def api_external_sync():
     """Қабули маълумот аз Client (app.py) тавассути API"""
-    if request.headers.get("X-API-KEY") != API_KEY:
-        return jsonify({"ok": False, "error": "Unauthorized"}), 403
 
     data = request.get_json(silent=True) or {}
     sync_type = data.get("sync_type") # 'order' ё 'customer'
@@ -2630,6 +2646,7 @@ def api_external_sync():
 
 
 @app.route("/api/orders/new", methods=["POST", "OPTIONS"])
+@require_api_key
 def api_orders_new():
     if request.method == "OPTIONS":
         return ("", 204)
@@ -2690,6 +2707,7 @@ def api_orders_new():
 
 
 @app.route("/api/orders/since", methods=["GET"])
+@require_api_key
 def api_orders_since():
     last_id = request.args.get("last_id", "0")
     try:
@@ -2737,6 +2755,7 @@ def api_orders_since():
     )
 
 @app.route("/api/orders/update-status", methods=["POST", "OPTIONS"])
+@require_api_key
 def api_orders_update_status():
     if request.method == "OPTIONS":
         return ("", 204)
@@ -2892,6 +2911,7 @@ def api_orders_update_status():
     return jsonify({"ok": updated})
 
 @app.route("/api/orders/clear-all", methods=["POST"])
+@require_api_key
 def api_orders_clear_all():
     conn = sqlite3.connect(DB_PATH, timeout=20)
     cur = conn.cursor()
@@ -2903,6 +2923,7 @@ def api_orders_clear_all():
     return jsonify({"ok": True})
 
 @app.route("/api/orders/delete/<int:order_id>", methods=["DELETE"])
+@require_api_key
 def api_order_delete_db(order_id):
     conn = sqlite3.connect(DB_PATH, timeout=20)
     cur = conn.cursor()
@@ -2913,6 +2934,7 @@ def api_order_delete_db(order_id):
     return jsonify({"ok": ok})
 
 @app.route("/api/orders/customer-status", methods=["GET"])
+@require_api_key
 def api_orders_customer_status():
     customer_id = str(request.args.get("customer_id", "")).strip()
     if not customer_id:
@@ -2946,6 +2968,7 @@ def api_orders_customer_status():
 
 # FOOD MANAGEMENT API ROUTES
 @app.route("/api/foods/list", methods=["GET"])
+@require_api_key
 def api_foods_list():
     conn = sqlite3.connect(DB_PATH, timeout=20)
     cur = conn.cursor()
@@ -2972,6 +2995,7 @@ def api_foods_list():
     )
 
 @app.route("/api/foods/add", methods=["POST", "OPTIONS"])
+@require_api_key
 def api_foods_add():
     if request.method == "OPTIONS":
         return ("", 204)
@@ -3023,6 +3047,7 @@ def api_foods_add():
         return jsonify({"ok": False, "error": str(e)}), 500
 
 @app.route("/api/foods/update/<int:food_id>", methods=["PUT", "OPTIONS"])
+@require_api_key
 def api_foods_update(food_id):
     if request.method == "OPTIONS":
         return ("", 204)
@@ -3058,6 +3083,7 @@ def api_foods_update(food_id):
         return jsonify({"ok": False, "error": "duplicate_name"}), 400
 
 @app.route("/api/foods/delete/<int:food_id>", methods=["DELETE", "OPTIONS"])
+@require_api_key
 def api_foods_delete(food_id):
     if request.method == "OPTIONS":
         return ("", 204)
@@ -3071,6 +3097,7 @@ def api_foods_delete(food_id):
     return jsonify({"ok": deleted})
 
 @app.route("/api/aktsii/list", methods=["GET"])
+@require_api_key
 def api_aktsii_list():
     conn = sqlite3.connect(DB_PATH, timeout=20); cur = conn.cursor()
     cur.execute("SELECT id, title, price, description, image_url, created FROM aktsii ORDER BY id DESC")
@@ -3078,6 +3105,7 @@ def api_aktsii_list():
     return jsonify({"ok": True, "aktsii": [{"id": r[0], "title": r[1], "price": r[2], "description": r[3], "image_url": r[4], "created": r[5]} for r in rows]})
 
 @app.route("/api/aktsii/add", methods=["POST"])
+@require_api_key
 def api_aktsii_add():
     title = request.form.get("title", "").strip()
     price = request.form.get("price", "").strip()
@@ -3098,6 +3126,7 @@ def api_aktsii_add():
     return jsonify({"ok": True})
 
 @app.route("/api/aktsii/delete/<int:aktsii_id>", methods=["DELETE"])
+@require_api_key
 def api_aktsii_delete(aktsii_id):
     conn = sqlite3.connect(DB_PATH, timeout=20); cur = conn.cursor()
     cur.execute("DELETE FROM aktsii WHERE id = ?", (aktsii_id,))
@@ -3105,6 +3134,7 @@ def api_aktsii_delete(aktsii_id):
     return jsonify({"ok": True})
 
 @app.route("/api/orders/full-history", methods=["GET"])
+@require_api_key
 def api_full_order_history():
     conn = sqlite3.connect(DB_PATH, timeout=20)
     cur = conn.cursor()
@@ -3119,6 +3149,7 @@ def api_full_order_history():
     return jsonify({"ok": True, "history": history})
 
 @app.route("/api/orders/clear-full-history", methods=["POST"])
+@require_api_key
 def api_clear_full_history():
     conn = sqlite3.connect(DB_PATH, timeout=20)
     cur = conn.cursor()
@@ -3129,7 +3160,9 @@ def api_clear_full_history():
     return jsonify({"ok": True})
 
 @app.route("/api/stats/daily-revenue", methods=["GET"])
+@require_api_key
 def api_daily_revenue():
+    
     conn = sqlite3.connect(DB_PATH, timeout=20)
     cur = conn.cursor()
     # Гирифтани маблағ ва шумораи заказҳо дар як рӯз
@@ -3142,6 +3175,7 @@ def api_daily_revenue():
     return jsonify({"ok": True, "stats": stats})
 
 @app.route("/api/stats/popular-foods", methods=["GET"])
+@require_api_key
 def api_popular_foods():
     conn = sqlite3.connect(DB_PATH, timeout=20)
     cur = conn.cursor()
@@ -3188,6 +3222,7 @@ def api_popular_foods():
     return jsonify({"ok": True, "stats": stats})
 
 @app.route("/api/customers/delete/<string:customer_id>", methods=["DELETE"])
+@require_api_key
 def api_customers_delete(customer_id):
     conn = sqlite3.connect(DB_PATH, timeout=20)
     cur = conn.cursor()
@@ -3198,6 +3233,7 @@ def api_customers_delete(customer_id):
     return jsonify({"ok": ok})
 
 @app.route("/api/stats/clear-history", methods=["POST"])
+@require_api_key
 def api_stats_clear_history():
     conn = sqlite3.connect(DB_PATH, timeout=20)
     cur = conn.cursor()
@@ -3209,6 +3245,7 @@ def api_stats_clear_history():
     return jsonify({"ok": True})
 
 @app.route("/api/customers/list", methods=["GET"])
+@require_api_key
 def api_customers_list():
     conn = sqlite3.connect(DB_PATH, timeout=20)
     cur = conn.cursor()
@@ -3217,6 +3254,7 @@ def api_customers_list():
     return jsonify({"ok": True, "customers": [{"full_name": r[0], "customer_id": r[1], "created": r[2]} for r in rows]})
 
 @app.route("/api/settings/get", methods=["GET"])
+@require_api_key
 def api_get_setting():
     key = request.args.get("key")
     conn = sqlite3.connect(DB_PATH, timeout=20); cur = conn.cursor()
@@ -3224,6 +3262,7 @@ def api_get_setting():
     return jsonify({"ok": True, "val": r[0] if r else ""})
 
 @app.route("/api/settings/set", methods=["POST"])
+@require_api_key
 def api_set_setting():
     data = request.get_json()
     conn = sqlite3.connect(DB_PATH, timeout=20); cur = conn.cursor()

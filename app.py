@@ -3,14 +3,35 @@ import sqlite3
 import json
 import random
 import os
-from flask import Flask, render_template_string, url_for, request, jsonify, send_from_directory, redirect
+from flask import Flask, render_template_string, url_for, request, jsonify, send_from_directory, redirect, make_response
 from datetime import datetime
 import re
 from pywebpush import webpush, WebPushException
 from werkzeug.utils import secure_filename
+from flask_cors import CORS
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
 
 app = Flask(__name__)
+CORS(app, resources={r"/api/*": {"origins": "*"}})
 UPLOAD_FOLDER = 'static/images'
+
+# API Key for inter-app communication
+TFC_API_KEY = os.getenv("TFC_API_KEY", "tfc_secret_key_2026_xyz_secure")
+
+def require_api_key(f):
+    """Decorator to require API key for protected routes"""
+    from functools import wraps
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        # Check for API key in headers
+        api_key = request.headers.get('X-API-KEY')
+        if not api_key or api_key != TFC_API_KEY:
+            return jsonify({"error": "Дастрасӣ манъ аст! API Key хатост."}), 401
+        return f(*args, **kwargs)
+    return decorated_function
 
 # Анбор барои нигоҳдории кодҳои тасдиқ (Phone: Code)
 verification_codes = {}
@@ -356,7 +377,11 @@ ADMIN_HTML = """<!DOCTYPE html>
     </main>
     <script>
         async function loadOrders() {
-            const res = await fetch('/api/orders/since?last_id=0');
+            const res = await fetch('/api/orders/since?last_id=0', {
+                headers: {
+                    'X-API-KEY': 'tfc_secret_key_2026_xyz_secure'
+                }
+            });
             const data = await res.json();
             const tbody = document.getElementById('orders-table');
             tbody.innerHTML = '';
@@ -377,7 +402,14 @@ ADMIN_HTML = """<!DOCTYPE html>
         }
         async function updateStatus(id, field, val) {
             const body = {id, field, value:val};
-            await fetch('/api/orders/update-status', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body) });
+            await fetch('/api/orders/update-status', { 
+                method:'POST', 
+                headers:{
+                    'Content-Type':'application/json',
+                    'X-API-KEY': 'tfc_secret_key_2026_xyz_secure'
+                }, 
+                body:JSON.stringify(body) 
+            });
             loadOrders();
         }
         setInterval(loadOrders, 3000); loadOrders();
@@ -2453,7 +2485,10 @@ HTML_TEMPLATE = r"""
             // Регистрация пользователя на сервере
             fetch('/api/customers/register', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 
+                    'Content-Type': 'application/json',
+                    'X-API-KEY': 'tfc_secret_key_2026_xyz_secure'
+                },
                 body: JSON.stringify({ full_name: fullName, customer_id: generatedId })
             }).catch(e => console.error("Reg error:", e));
 
@@ -2519,7 +2554,10 @@ HTML_TEMPLATE = r"""
                 try {
                     const res = await fetch('/api/auth/send-code', {
                         method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
+                        headers: { 
+                            'Content-Type': 'application/json',
+                            'X-API-KEY': 'tfc_secret_key_2026_xyz_secure'
+                        },
                         body: JSON.stringify({ phone })
                     });
                     const data = await res.json();
@@ -2554,7 +2592,10 @@ HTML_TEMPLATE = r"""
                 try {
                     const res = await fetch('/api/auth/verify-code', {
                         method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
+                        headers: { 
+                            'Content-Type': 'application/json',
+                            'X-API-KEY': 'tfc_secret_key_2026_xyz_secure'
+                        },
                         body: JSON.stringify({ phone, code })
                     });
                     const data = await res.json();
@@ -3186,6 +3227,9 @@ HTML_TEMPLATE = r"""
 
             const res = await fetch('/api/reviews/add', {
                 method: 'POST',
+                headers: {
+                    'X-API-KEY': 'tfc_secret_key_2026_xyz_secure'
+                },
                 body: formData
             });
             const data = await res.json();
@@ -3200,7 +3244,12 @@ HTML_TEMPLATE = r"""
         async function deleteReview(id) {
             const code = prompt("Введите код для удаления:");
             if (code === "anis1234") {
-                const res = await fetch(`/api/reviews/delete/${id}`, { method: 'POST' });
+                const res = await fetch(`/api/reviews/delete/${id}`, { 
+                    method: 'POST',
+                    headers: {
+                        'X-API-KEY': 'tfc_secret_key_2026_xyz_secure'
+                    }
+                });
                 const data = await res.json();
                 if (data.ok) {
                     location.reload();
@@ -3513,7 +3562,10 @@ HTML_TEMPLATE = r"""
 
             fetch(adminApiBase() + "/api/orders/new", {
                 method: "POST",
-                headers: { "Content-Type": "application/json" },
+                headers: { 
+                    "Content-Type": "application/json",
+                    "X-API-KEY": "tfc_secret_key_2026_xyz_secure"
+                },
                 body: JSON.stringify({
                     customer: profile.fullName,
                     customer_id: profile.id,
@@ -3969,7 +4021,11 @@ HTML_TEMPLATE = r"""
                 sessionStorage.setItem('delivery_address', address);
                 
                 // Гирифтани рақами навбатӣ барои Доставка
-                fetch('/api/get-next-payment-phone')
+                fetch('/api/get-next-payment-phone', {
+                    headers: {
+                        'X-API-KEY': 'tfc_secret_key_2026_xyz_secure'
+                    }
+                })
                     .then(r => r.json())
                     .then(data => {
                         overlay.remove(); 
@@ -3979,7 +4035,11 @@ HTML_TEMPLATE = r"""
 
             document.getElementById('btn-pickup').onclick = () => { 
                 // Гирифтани рақами навбатӣ барои Самовывоз (Гардиш)
-                fetch('/api/get-next-payment-phone')
+                fetch('/api/get-next-payment-phone', {
+                    headers: {
+                        'X-API-KEY': 'tfc_secret_key_2026_xyz_secure'
+                    }
+                })
                     .then(r => r.json())
                     .then(data => {
                         overlay.remove(); 
@@ -4052,7 +4112,12 @@ HTML_TEMPLATE = r"""
             } catch (e) {}
             if (!profile || !profile.id) return;
             try {
-                const res = await fetch(adminApiBase() + "/api/orders/customer-status?customer_id=" + encodeURIComponent(profile.id), { cache: "no-store" });
+                const res = await fetch(adminApiBase() + "/api/orders/customer-status?customer_id=" + encodeURIComponent(profile.id), { 
+                    cache: "no-store",
+                    headers: {
+                        'X-API-KEY': 'tfc_secret_key_2026_xyz_secure'
+                    }
+                });
                 if (!res.ok) return;
                 const data = await res.json();
                 if (!data || !data.ok || !Array.isArray(data.orders) || data.orders.length === 0) return;
@@ -4240,6 +4305,7 @@ def serve_manifest():
     return send_from_directory('.', 'manifest.json')
 
 @app.route("/api/reviews/add", methods=["POST"])
+@require_api_key
 def api_reviews_add():
     name = request.form.get("name")
     text = request.form.get("text")
@@ -4262,6 +4328,7 @@ def api_reviews_add():
     return jsonify({"ok": True})
 
 @app.route("/api/reviews/delete/<int:review_id>", methods=["POST"])
+@require_api_key
 def api_reviews_delete(review_id):
     conn = sqlite3.connect(DB_PATH); cur = conn.cursor()
     cur.execute("DELETE FROM reviews WHERE id = ?", (review_id,))
@@ -4269,6 +4336,7 @@ def api_reviews_delete(review_id):
     return jsonify({"ok": True})
 
 @app.route("/api/push/subscribe", methods=["POST"])
+@require_api_key
 def api_push_subscribe():
     data = request.get_json()
     customer_id = data.get("customer_id")
@@ -4279,6 +4347,7 @@ def api_push_subscribe():
     return jsonify({"ok": True})
 
 @app.route("/api/customers/register", methods=["POST"])
+@require_api_key
 def api_customers_register():
     data = request.get_json() or {}
     full_name = data.get("full_name")
@@ -4299,6 +4368,7 @@ def api_customers_register():
         return jsonify({"ok": False, "error": str(e)}), 500
 
 @app.route("/api/auth/send-code", methods=["POST"])
+@require_api_key
 def api_send_code():
     data = request.get_json() or {}
     phone = data.get("phone", "").strip()
@@ -4328,6 +4398,7 @@ def send_real_sms(phone, message):
     pass
 
 @app.route("/api/auth/verify-code", methods=["POST"])
+@require_api_key
 def api_verify_code():
     data = request.get_json() or {}
     phone = data.get("phone", "").strip()
@@ -4341,6 +4412,7 @@ def api_verify_code():
 
 # API Routes (Moved from bilol.py to app.py)
 @app.route("/api/orders/new", methods=["POST", "OPTIONS"])
+@require_api_key
 def api_orders_new():
     if request.method == "OPTIONS":
         return ("", 204)
@@ -4389,11 +4461,13 @@ def api_orders_new():
     return jsonify({"ok": True, "order_id": order_id})
 
 @app.route("/api/get-next-payment-phone")
+@require_api_key
 def api_get_next_phone():
     phone = get_next_payment_phone_for_rotation()
     return jsonify({"ok": True, "phone": phone})
 
 @app.route("/api/orders/since", methods=["GET"])
+@require_api_key
 def api_orders_since():
     try:
         last_id = int(request.args.get("last_id", 0))
@@ -4408,6 +4482,7 @@ def api_orders_since():
         return jsonify({"ok": False, "error": "Database error"}), 500
 
 @app.route("/api/orders/update-status", methods=["POST"])
+@require_api_key
 def api_orders_update_status():
     data = request.get_json() or {}
     order_id, field = data.get("id"), data.get("field")
@@ -4427,6 +4502,7 @@ def api_orders_update_status():
     return jsonify({"ok": True})
 
 @app.route("/api/orders/customer-status", methods=["GET"])
+@require_api_key
 def api_orders_customer_status():
     customer_id = request.args.get("customer_id", "")
     try:
@@ -4440,6 +4516,7 @@ def api_orders_customer_status():
         return jsonify({"ok": False, "error": str(e)})
 
 @app.route("/api/foods/list", methods=["GET"])
+@require_api_key
 def api_foods_list():
     conn = sqlite3.connect(DB_PATH); cur = conn.cursor()
     cur.execute("SELECT id, name, price, category, image_url, description FROM foods"); rows = cur.fetchall(); conn.close()
