@@ -4621,6 +4621,16 @@ def food_detail(food_id):
         print(f"Error loading food detail: {e}")
         return redirect('/')
 
+@app.route("/api/host-info", methods=["GET"])
+def api_host_info():
+    """Return the current host URL for inter-app communication"""
+    host = request.host_url.rstrip('/')
+    return jsonify({
+        "ok": True,
+        "host": host,
+        "api_url": f"{host}/api"
+    })
+
 def get_local_ip():
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:

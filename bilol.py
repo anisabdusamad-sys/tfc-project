@@ -4,6 +4,7 @@ import json
 import os
 import socket
 import re
+import requests
 from datetime import datetime
 from werkzeug.utils import secure_filename
 from pywebpush import webpush, WebPushException
@@ -19,9 +20,28 @@ IMAGE_MAX_SIZE = (1200, 1200)
 IMAGE_WEBP_QUALITY = 78
 
 # API Base URL for inter-app communication
-# For localhost: http://127.0.0.1:5000
-# For hosting: https://tfc-app.onrender.com
-API_BASE_URL = os.getenv("TFC_API_URL", "http://127.0.0.1:5000")
+# Will be dynamically detected from app.py if available
+DEFAULT_API_URL = os.getenv("TFC_API_URL", "http://127.0.0.1:5000")
+API_BASE_URL = DEFAULT_API_URL
+
+def detect_app_host():
+    """Dynamically detect the app.py host URL"""
+    global API_BASE_URL
+    try:
+        # Try to get host info from app.py
+        response = requests.get(f"{DEFAULT_API_URL}/api/host-info", timeout=2)
+        if response.status_code == 200:
+            data = response.json()
+            if data.get("ok"):
+                API_BASE_URL = data["api_url"]
+                print(f"✅ Auto-detected app host: {API_BASE_URL}")
+                return
+    except Exception as e:
+        print(f"⚠️ Could not auto-detect app host: {e}")
+    
+    # Fallback to environment variable or default
+    API_BASE_URL = DEFAULT_API_URL
+    print(f"ℹ️ Using configured API URL: {API_BASE_URL}")
 
 # Калидҳо бояд бо app.py якхела бошанд
 VAPID_PUBLIC_KEY = "BCX7B8_p9v7Z-S-l1M0W4Y1Z2X3C4V5B6N7M8L9K0J1I2H3G4F5E6D7C8B9A0S1D2F3G4H5J6K7L8"
