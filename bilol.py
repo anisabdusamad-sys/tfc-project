@@ -8,11 +8,20 @@ from datetime import datetime
 from werkzeug.utils import secure_filename
 from pywebpush import webpush, WebPushException
 from PIL import Image, ImageOps, UnidentifiedImageError
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
 
 app = Flask(__name__)
 UPLOAD_FOLDER = 'static/images'
 IMAGE_MAX_SIZE = (1200, 1200)
 IMAGE_WEBP_QUALITY = 78
+
+# API Base URL for inter-app communication
+# For localhost: http://127.0.0.1:5000
+# For hosting: https://tfc-app.onrender.com
+API_BASE_URL = os.getenv("TFC_API_URL", "http://127.0.0.1:5000")
 
 # Калидҳо бояд бо app.py якхела бошанд
 VAPID_PUBLIC_KEY = "BCX7B8_p9v7Z-S-l1M0W4Y1Z2X3C4V5B6N7M8L9K0J1I2H3G4F5E6D7C8B9A0S1D2F3G4H5J6K7L8"
@@ -1196,6 +1205,7 @@ HTML = r"""<!DOCTYPE html>
     <script>
         const STORAGE_KEY = 'tfc_admin_orders_v2';
         const API_KEY = 'tfc_secret_key_2026_xyz_secure';
+        const API_BASE_URL = '{{ API_BASE_URL }}';
         let orders = [];
         let filterMode = 'all';
         let revenueChart = null;
@@ -1470,17 +1480,17 @@ HTML = r"""<!DOCTYPE html>
             let newRefund = (order.refund || 0) + (isStriking ? refundDiff : -refundDiff);
             if (newRefund < 0) newRefund = 0;
 
-            await fetch('/api/orders/update-status', {
+            await fetch(`${API_BASE_URL}/api/orders/update-status`, {
                 method: 'POST',
                 headers: apiHeaders(),
                 body: JSON.stringify({ id: orderId, field: 'food', value: newFullText })
             });
-            await fetch('/api/orders/update-status', {
+            await fetch(`${API_BASE_URL}/api/orders/update-status`, {
                 method: 'POST',
                 headers: apiHeaders(),
                 body: JSON.stringify({ id: orderId, field: 'refund', value: newRefund })
             });
-            await fetch('/api/orders/update-status', {
+            await fetch(`${API_BASE_URL}/api/orders/update-status`, {
                 method: 'POST',
                 headers: apiHeaders(),
                 body: JSON.stringify({ id: orderId, field: 'out_of_stock', value: 1 })
@@ -1502,7 +1512,7 @@ HTML = r"""<!DOCTYPE html>
                 saveOrders(); // Захира дар браузер (localStorage)
                 // Фиристодан ба сервер барои нигоҳ доштан дар базаи маълумот
                 try {
-                    await fetch("/api/orders/update-status", {
+                    await fetch(`${API_BASE_URL}/api/orders/update-status`, {
                         method: "POST",
                         headers: apiHeaders(),
                         body: JSON.stringify({ id: id, field: 'estimated_time', value: order.estimated_time })
@@ -1541,7 +1551,7 @@ HTML = r"""<!DOCTYPE html>
 
             order[field] = nextValue;
             try {
-                await fetch("/api/orders/update-status", {
+                await fetch(`${API_BASE_URL}/api/orders/update-status`, {
                     method: "POST",
                     headers: apiHeaders(),
                     body: JSON.stringify(body)
@@ -1561,7 +1571,7 @@ HTML = r"""<!DOCTYPE html>
         async function deleteOrder(id) {
             showConfirm('Удалить этот заказ?', async () => {
                 try {
-                    const res = await fetch(`/api/orders/delete/${id}`, { method: 'DELETE', headers: apiHeaders() });
+                    const res = await fetch(`${API_BASE_URL}/api/orders/delete/${id}`, { method: 'DELETE', headers: apiHeaders() });
                     const data = await res.json();
                     if (data.ok) {
                         orders = orders.filter(o => o.id !== id);
@@ -1576,7 +1586,7 @@ HTML = r"""<!DOCTYPE html>
         async function clearAllOrders() {
             showConfirm('Удалить ВСЕ заказы из базы?', async () => {
                 try {
-                    const res = await fetch('/api/orders/clear-all', { method: 'POST', headers: apiHeaders() });
+                    const res = await fetch(`${API_BASE_URL}/api/orders/clear-all`, { method: 'POST', headers: apiHeaders() });
                     if (res.ok) {
                         orders = [];
                         localStorage.removeItem(STORAGE_KEY);
@@ -1622,7 +1632,7 @@ HTML = r"""<!DOCTYPE html>
             
             // Гирифтани омори рӯзона аз Backend (Барои имрӯз ва таърих)
             try {
-                const res = await fetch('/api/stats/daily-revenue');
+                const res = await fetch(`${API_BASE_URL}/api/stats/daily-revenue`, { headers: apiHeaders() });
                 const data = await res.json();
                 if (data.ok) {
                     window.dailyStatsHistory = data.stats;
@@ -1681,7 +1691,7 @@ HTML = r"""<!DOCTYPE html>
 
         async function renderFullHistory() {
             try {
-                const res = await fetch('/api/orders/full-history', { headers: apiHeaders() });
+                const res = await fetch(`${API_BASE_URL}/api/orders/full-history`, { headers: apiHeaders() });
                 const data = await res.json();
                 const tbody = document.getElementById('full-history-table-body');
                 tbody.innerHTML = '';
@@ -1710,7 +1720,7 @@ HTML = r"""<!DOCTYPE html>
 
         async function clearFullHistory() {
             showConfirm('Вы уверены, что хотите очистить ПОЛНУЮ ИСТОРИЮ?', async () => {
-                const res = await fetch('/api/orders/clear-full-history', { method: 'POST', headers: apiHeaders() });
+                const res = await fetch(`${API_BASE_URL}/api/orders/clear-full-history`, { method: 'POST', headers: apiHeaders() });
                 if ((await res.json()).ok) { hideFullHistoryModal(); toast('История очищена'); }
             });
         }
@@ -1718,7 +1728,7 @@ HTML = r"""<!DOCTYPE html>
         async function verifyHistoryCode() {
             const code = document.getElementById('history-access-code').value;
             
-            const res = await fetch('/api/settings/get?key=admin_password', { headers: apiHeaders() });
+            const res = await fetch(`${API_BASE_URL}/api/settings/get?key=admin_password`, { headers: apiHeaders() });
             const data = await res.json();
             const correctCode = data.val || "159951.tfc";
 
@@ -1758,7 +1768,7 @@ HTML = r"""<!DOCTYPE html>
             const oldPass = document.getElementById('old-pass-input').value;
             const newPass = document.getElementById('new-pass-input').value;
 
-            const res = await fetch('/api/settings/get?key=admin_password');
+            const res = await fetch(`${API_BASE_URL}/api/settings/get?key=admin_password`);
             const data = await res.json();
             const currentStored = data.val || "159951.tfc";
 
@@ -1771,7 +1781,7 @@ HTML = r"""<!DOCTYPE html>
                 return;
             }
 
-            const confirmRes = await fetch('/api/settings/set', {
+            const confirmRes = await fetch(`${API_BASE_URL}/api/settings/set`, {
                 method: 'POST',
                 headers: apiHeaders(),
                 body: JSON.stringify({key: 'admin_password', val: newPass.trim()})
@@ -1787,7 +1797,7 @@ HTML = r"""<!DOCTYPE html>
 
         async function renderHistoryData() {
             // Даъват кардани маълумоти нав аз сервер
-            const res = await fetch('/api/stats/daily-revenue', { headers: apiHeaders() });
+            const res = await fetch(`${API_BASE_URL}/api/stats/daily-revenue`, { headers: apiHeaders() });
             const data = await res.json();
             const stats = (data.ok ? data.stats : []).reverse(); // Аз кӯҳна ба нав барои график
 
@@ -1867,7 +1877,7 @@ HTML = r"""<!DOCTYPE html>
         async function clearHistory() {
             showConfirm('Очистить ВСЮ историю доходов?', async () => {
                 try {
-                    const res = await fetch('/api/stats/clear-history', { method: 'POST', headers: apiHeaders() });
+                    const res = await fetch(`${API_BASE_URL}/api/stats/clear-history`, { method: 'POST', headers: apiHeaders() });
                     const data = await res.json();
                     if (data.ok) {
                         toast('История доходов полностью очищена');
@@ -1916,7 +1926,7 @@ HTML = r"""<!DOCTYPE html>
 
         async function renderPopularFoods() {
             try {
-                const res = await fetch('/api/stats/popular-foods', { headers: apiHeaders() });
+                const res = await fetch(`${API_BASE_URL}/api/stats/popular-foods`, { headers: apiHeaders() });
                 const data = await res.json();
                 const tbody = document.getElementById('popular-foods-table-body');
                 tbody.innerHTML = '';
@@ -2030,7 +2040,7 @@ HTML = r"""<!DOCTYPE html>
 
         async function fetchNewOrders(isInitial) {
             // Танҳо як бор fetch мекунем бо истифодаи lastSeenOrderId
-            const res = await fetch(`/api/orders/since?last_id=${lastSeenOrderId}`, { cache: 'no-store', headers: apiHeaders() });
+            const res = await fetch(`${API_BASE_URL}/api/orders/since?last_id=${lastSeenOrderId}`, { cache: 'no-store', headers: apiHeaders() });
             if (!res.ok) return;
             const data = await res.json();
             const newOrders = Array.isArray(data.orders) ? data.orders : [];
@@ -2169,7 +2179,7 @@ HTML = r"""<!DOCTYPE html>
 
         async function loadFoods() {
             try {
-                const response = await fetch('/api/foods/list', { headers: apiHeaders() });
+                const response = await fetch(`${API_BASE_URL}/api/foods/list`, { headers: apiHeaders() });
                 const data = await response.json();
                 foods = Array.isArray(data.foods) ? data.foods : [];
             } catch (e) {
@@ -2318,7 +2328,7 @@ HTML = r"""<!DOCTYPE html>
         let aktsii = [];
         async function loadAktsii() {
             try {
-                const res = await fetch('/api/aktsii/list', { headers: apiHeaders() });
+                const res = await fetch(`${API_BASE_URL}/api/aktsii/list`, { headers: apiHeaders() });
                 const data = await res.json();
                 aktsii = data.aktsii || [];
                 renderAktsii();
@@ -2376,7 +2386,7 @@ HTML = r"""<!DOCTYPE html>
                 formData.append('image', fileInput.files[0]);
             }
 
-            const res = await fetch('/api/aktsii/add', { method: 'POST', headers: apiHeaders(), body: formData });
+            const res = await fetch(`${API_BASE_URL}/api/aktsii/add`, { method: 'POST', headers: apiHeaders(), body: formData });
             const data = await res.json();
             foodSubmitBtn.disabled = false;
             
@@ -2391,7 +2401,7 @@ HTML = r"""<!DOCTYPE html>
 
         async function deleteAktsii(id) {
             showConfirm('Удалить эту акцию?', async () => {
-                const res = await fetch(`/api/aktsii/delete/${id}`, { method: 'DELETE', headers: apiHeaders() });
+                const res = await fetch(`${API_BASE_URL}/api/aktsii/delete/${id}`, { method: 'DELETE', headers: apiHeaders() });
                 if ((await res.json()).ok) { loadAktsii(); toast('Акция удалена'); }
             });
         }
@@ -2506,7 +2516,7 @@ HTML = r"""<!DOCTYPE html>
             }
 
             const method = id ? 'PUT' : 'POST';
-            const url = id ? `/api/foods/update/${id}` : '/api/foods/add';
+            const url = id ? `${API_BASE_URL}/api/foods/update/${id}` : `${API_BASE_URL}/api/foods/add`;
 
             try {
                 const response = await fetch(url, {
@@ -2540,7 +2550,7 @@ HTML = r"""<!DOCTYPE html>
             
             showConfirm(confirmMsg, async () => {
                 try {
-                    const response = await fetch(`/api/foods/delete/${foodId}`, {
+                    const response = await fetch(`${API_BASE_URL}/api/foods/delete/${foodId}`, {
                         method: 'DELETE',
                         headers: apiHeaders()
                     });
