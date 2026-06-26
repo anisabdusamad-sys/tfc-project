@@ -29,7 +29,7 @@ def detect_app_host():
     global API_BASE_URL
     try:
         # Try to get host info from app.py
-        response = requests.get(f"{DEFAULT_API_URL}/api/host-info", timeout=2)
+        response = requests.get(f"{DEFAULT_API_URL}/api/host-info", timeout=5)
         if response.status_code == 200:
             data = response.json()
             if data.get("ok"):
@@ -3309,6 +3309,15 @@ def get_local_ip():
         return "127.0.0.1"
     finally:
         sock.close()
+
+# Initialize API_BASE_URL on module load (works for both direct execution and Gunicorn)
+if 'onrender.com' in DEFAULT_API_URL or 'localhost' not in DEFAULT_API_URL:
+    # External hosting - use configured URL directly
+    API_BASE_URL = DEFAULT_API_URL
+    print(f"🌐 External hosting detected: {API_BASE_URL}")
+else:
+    # Localhost - try auto-detection
+    detect_app_host()
 
 if __name__ == '__main__':
     admin_port = 5001
