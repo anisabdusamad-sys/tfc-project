@@ -2330,8 +2330,8 @@ HTML_TEMPLATE = r"""
                 <div class="h-[250px] w-full relative border-t border-white/5">
                     <iframe src="https://www.google.com/maps?q=37.91936836538492,69.78745179867099&hl=ru&z=16&output=embed" width="100%" height="100%" style="border:0;" allowfullscreen="" loading="lazy" referrerpolicy="no-referrer-when-downgrade"></iframe>
                     <div class="absolute inset-0 pointer-events-none shadow-[inset_0_0_60px_rgba(0,0,0,0.4)]"></div>
-                    <a href="https://www.google.com/maps/dir/?api=1&destination=37.91936836538492,69.78745179867099" target="_blank" class="absolute bottom-4 right-4 backdrop-blur-md px-4 py-2 rounded-xl text-[9px] font-black border transition-all flex items-center gap-2 pointer-events-auto uppercase tracking-widest" style="background: rgba(0,0,0,0.8); color: var(--text-body); border-color: rgba(255,255,255,0.2); hover:background: rgba(255,215,0,0.1); hover:color: var(--tfc-gold); hover:border-color: var(--tfc-gold);">
-                            <i class="fa-solid fa-diamond-turn-right text-base"></i> <span>ОТКРЫТЬ В GPS</span>
+                    <a href="https://www.google.com/maps?q=37.91936836538492,69.78745179867099" target="_blank" class="absolute bottom-4 right-4 backdrop-blur-md px-4 py-2 rounded-xl text-[9px] font-black border transition-all flex items-center gap-2 pointer-events-auto uppercase tracking-widest" style="background: rgba(0,0,0,0.8); color: var(--text-body); border-color: rgba(255,255,255,0.2); hover:background: rgba(255,215,0,0.1); hover:color: var(--tfc-gold); hover:border-color: var(--tfc-gold);">
+                            <i class="fa-solid fa-location-dot text-base"></i> <span>ОТКРЫТЬ В GPS</span>
                          </a>
                 </div>
             </div>
