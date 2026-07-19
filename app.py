@@ -399,11 +399,9 @@ ADMIN_HTML = """<!DOCTYPE html>
         </div>
     </main>
     <script>
-        // 1. Линки беканди худро, ки аз Render гирифтӣ, дар ин ҷо гузор (дар охираш "/" НАБОШАД):
-        const BASE_URL = "https://tfc-backend.onrender.com"; 
-        
-        // 2. Калиди махфии API-ро аниқ навис:
-        const API_KEY = "tfc_secret_key_2026_xyz_secure"; 
+        // ГЛОБАЛИ: Инҳоро дар болои ҳамаи скриптҳо гузор, то дар ҳама ҷо дастрас бошанд
+        const BASE_URL = "https://tfc-project-2sss.onrender.com";
+        const API_KEY = "tfc_secret_key_2026_xyz_secure";
 
         async function loadOrders() {
             const res = await fetch(`${BASE_URL}/api/orders/since?last_id=0`, {
@@ -2420,6 +2418,10 @@ HTML_TEMPLATE = r"""
     </section>
     </main>
     <script>
+        // ГЛОБАЛИ: Инҳоро дар болои ҳамаи скриптҳо гузор, то дар ҳама ҷо дастрас бошанд
+        const BASE_URL = "https://tfc-project-2sss.onrender.com";
+        const API_KEY = "tfc_secret_key_2026_xyz_secure";
+
         document.addEventListener("DOMContentLoaded", () => {
             if (localStorage.getItem("tfc_session")) showApp();
             else {
