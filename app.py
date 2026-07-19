@@ -15,7 +15,14 @@ from dotenv import load_dotenv
 load_dotenv()
 
 app = Flask(__name__)
-CORS(app, resources={r"/api/*": {"origins": "*"}})
+
+# БА ҶОИ CORS-И КӮҲНА ИНРО ГУЗОР:
+# Ин имкон медиҳад, ки фронтенди ту аз дилхоҳ домен (аз ҷумла Render) ба ин беканд коннект шавад
+CORS(app, resources={r"/api/*": {
+    "origins": "*",
+    "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    "allow_headers": ["Content-Type", "X-API-KEY"]
+}})
 UPLOAD_FOLDER = 'static/images'
 
 # Configure logging for better visibility in Render
@@ -392,10 +399,16 @@ ADMIN_HTML = """<!DOCTYPE html>
         </div>
     </main>
     <script>
+        // 1. Линки беканди худро, ки аз Render гирифтӣ, дар ин ҷо гузор (дар охираш "/" НАБОШАД):
+        const BASE_URL = "https://tfc-backend.onrender.com"; 
+        
+        // 2. Калиди махфии API-ро аниқ навис:
+        const API_KEY = "tfc_secret_key_2026_xyz_secure"; 
+
         async function loadOrders() {
-            const res = await fetch('/api/orders/since?last_id=0', {
+            const res = await fetch(`${BASE_URL}/api/orders/since?last_id=0`, {
                 headers: {
-                    'X-API-KEY': 'tfc_secret_key_2026_xyz_secure'
+                    'X-API-KEY': API_KEY
                 }
             });
             const data = await res.json();
@@ -418,11 +431,11 @@ ADMIN_HTML = """<!DOCTYPE html>
         }
         async function updateStatus(id, field, val) {
             const body = {id, field, value:val};
-            await fetch('/api/orders/update-status', { 
+            await fetch(`${BASE_URL}/api/orders/update-status`, { 
                 method:'POST', 
                 headers:{
                     'Content-Type':'application/json',
-                    'X-API-KEY': 'tfc_secret_key_2026_xyz_secure'
+                    'X-API-KEY': API_KEY
                 }, 
                 body:JSON.stringify(body) 
             });
@@ -2499,11 +2512,11 @@ HTML_TEMPLATE = r"""
             localStorage.setItem("tfc_session", fullName);
 
             // Регистрация пользователя на сервере
-            fetch('/api/customers/register', {
+            fetch(`${BASE_URL}/api/customers/register`, {
                 method: 'POST',
                 headers: { 
                     'Content-Type': 'application/json',
-                    'X-API-KEY': 'tfc_secret_key_2026_xyz_secure'
+                    'X-API-KEY': API_KEY
                 },
                 body: JSON.stringify({ full_name: fullName, customer_id: generatedId })
             }).catch(e => console.error("Reg error:", e));
@@ -2568,11 +2581,11 @@ HTML_TEMPLATE = r"""
                 btn.textContent = "Отправка...";
 
                 try {
-                    const res = await fetch('/api/auth/send-code', {
+                    const res = await fetch(`${BASE_URL}/api/auth/send-code`, {
                         method: 'POST',
                         headers: { 
                             'Content-Type': 'application/json',
-                            'X-API-KEY': 'tfc_secret_key_2026_xyz_secure'
+                            'X-API-KEY': API_KEY
                         },
                         body: JSON.stringify({ phone })
                     });
@@ -2606,11 +2619,11 @@ HTML_TEMPLATE = r"""
                 if (code.length !== 4) return alert("Введите 4 цифры!");
 
                 try {
-                    const res = await fetch('/api/auth/verify-code', {
+                    const res = await fetch(`${BASE_URL}/api/auth/verify-code`, {
                         method: 'POST',
                         headers: { 
                             'Content-Type': 'application/json',
-                            'X-API-KEY': 'tfc_secret_key_2026_xyz_secure'
+                            'X-API-KEY': API_KEY
                         },
                         body: JSON.stringify({ phone, code })
                     });
@@ -3241,10 +3254,10 @@ HTML_TEMPLATE = r"""
                 formData.append('image', fileInput.files[0]);
             }
 
-            const res = await fetch('/api/reviews/add', {
+            const res = await fetch(`${BASE_URL}/api/reviews/add`, {
                 method: 'POST',
                 headers: {
-                    'X-API-KEY': 'tfc_secret_key_2026_xyz_secure'
+                    'X-API-KEY': API_KEY
                 },
                 body: formData
             });
@@ -3260,10 +3273,10 @@ HTML_TEMPLATE = r"""
         async function deleteReview(id) {
             const code = prompt("Введите код для удаления:");
             if (code === "anis1234") {
-                const res = await fetch(`/api/reviews/delete/${id}`, { 
+                const res = await fetch(`${BASE_URL}/api/reviews/delete/${id}`, { 
                     method: 'POST',
                     headers: {
-                        'X-API-KEY': 'tfc_secret_key_2026_xyz_secure'
+                        'X-API-KEY': API_KEY
                     }
                 });
                 const data = await res.json();
@@ -3459,7 +3472,7 @@ HTML_TEMPLATE = r"""
         window.addEventListener("scroll", updateTopControlsByScroll);
 
         function adminApiBase() {
-            return "";
+            return BASE_URL;
         }
 
         let selectedOrderPayload = null;
@@ -3580,7 +3593,7 @@ HTML_TEMPLATE = r"""
                 method: "POST",
                 headers: { 
                     "Content-Type": "application/json",
-                    "X-API-KEY": "tfc_secret_key_2026_xyz_secure"
+                    "X-API-KEY": API_KEY
                 },
                 body: JSON.stringify({
                     customer: profile.fullName,
@@ -4037,9 +4050,9 @@ HTML_TEMPLATE = r"""
                 sessionStorage.setItem('delivery_address', address);
                 
                 // Гирифтани рақами навбатӣ барои Доставка
-                fetch('/api/get-next-payment-phone', {
+                fetch(`${BASE_URL}/api/get-next-payment-phone`, {
                     headers: {
-                        'X-API-KEY': 'tfc_secret_key_2026_xyz_secure'
+                        'X-API-KEY': API_KEY
                     }
                 })
                     .then(r => r.json())
@@ -4051,9 +4064,9 @@ HTML_TEMPLATE = r"""
 
             document.getElementById('btn-pickup').onclick = () => { 
                 // Гирифтани рақами навбатӣ барои Самовывоз (Гардиш)
-                fetch('/api/get-next-payment-phone', {
+                fetch(`${BASE_URL}/api/get-next-payment-phone`, {
                     headers: {
-                        'X-API-KEY': 'tfc_secret_key_2026_xyz_secure'
+                        'X-API-KEY': API_KEY
                     }
                 })
                     .then(r => r.json())
@@ -4131,7 +4144,7 @@ HTML_TEMPLATE = r"""
                 const res = await fetch(adminApiBase() + "/api/orders/customer-status?customer_id=" + encodeURIComponent(profile.id), { 
                     cache: "no-store",
                     headers: {
-                        'X-API-KEY': 'tfc_secret_key_2026_xyz_secure'
+                        'X-API-KEY': API_KEY
                     }
                 });
                 if (!res.ok) return;
@@ -4642,14 +4655,6 @@ def get_local_ip():
         sock.close()
 
 if __name__ == '__main__':
-    host = "0.0.0.0"
-    port = 5000
-    local_ip = get_local_ip()
-    print(f"Запущено на этом ПК: http://127.0.0.1:{port}")
-    print(f"------------------------------------------------------")
-    print(f"АДРЕС ДЛЯ ТЕЛЕФОНА: http://{local_ip}:{port}")
-    print(f"Если страница не открывается:")
-    print(f"1. Временно отключите Windows Firewall.")
-    print(f"2. Установите тип сети Wi-Fi в Windows на 'Private'.")
-    print(f"--------------c:/Users/Anis/Desktop/qwer/app.py----------------------------------------")
-    app.run(debug=True, host="0.0.0.0", port=port)
+    # Рендер худаш ба таври автоматӣ порт медиҳад. Ин сатр барои Render ҳаётан муҳим аст!
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host='0.0.0.0', port=port)
