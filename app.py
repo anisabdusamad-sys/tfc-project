@@ -4497,6 +4497,51 @@ def api_get_next_phone():
     phone = get_next_payment_phone_for_rotation()
     return jsonify({"ok": True, "phone": phone})
 
+@app.route("/api/orders", methods=["GET"])
+@require_api_key
+def api_orders_list():
+    """Get all orders with full details for admin panel"""
+    try:
+        conn = sqlite3.connect(DB_PATH, timeout=20)
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT id, customer, customer_id, food, price, qabyl, omoda, dostavka, 
+                   out_of_stock, refund, estimated_time, created, phone, 
+                   delivery_type, delivery_latitude, delivery_longitude, delivery_address, tip
+            FROM orders 
+            ORDER BY id DESC
+        """)
+        rows = cur.fetchall()
+        conn.close()
+        
+        orders = []
+        for r in rows:
+            orders.append({
+                "id": r[0],
+                "customer": r[1],
+                "customer_id": r[2],
+                "food": r[3],
+                "price": r[4],
+                "qabyl": bool(r[5]),
+                "omoda": bool(r[6]),
+                "dostavka": int(r[7]) if r[7] is not None else 0,
+                "out_of_stock": bool(r[8]) if r[8] is not None else False,
+                "refund": float(r[9]) if r[9] is not None else 0,
+                "estimated_time": r[10] if r[10] is not None else 0,
+                "created": r[11],
+                "phone": r[12],
+                "delivery_type": r[13],
+                "delivery_latitude": r[14] if len(r) > 14 else "",
+                "delivery_longitude": r[15] if len(r) > 15 else "",
+                "delivery_address": r[16] if len(r) > 16 else "",
+                "tip": r[17] if len(r) > 17 else ""
+            })
+        
+        return jsonify({"ok": True, "orders": orders})
+    except sqlite3.Error as e:
+        print(f"Database error in api_orders_list: {e}")
+        return jsonify({"ok": False, "error": "Database error"}), 500
+
 @app.route("/api/orders/since", methods=["GET"])
 @require_api_key
 def api_orders_since():
